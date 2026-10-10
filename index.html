@@ -3,687 +3,565 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>谜底时钟 · Nixie Clock</title>
+<title>辉光管时钟 · Nixie Clock</title>
+<meta name="description" content="一台跑在浏览器里的辉光管时钟 —— 蜂窝阳极网、玻璃罩反光与金属底座，全部由代码实时绘制。" />
+<meta name="theme-color" content="#0A0705" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="辉光时钟" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="icon" href="icons/icon-192.png" />
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
-  canvas { display: block; }
+  @font-face {
+    font-family: "Barlow Condensed"; font-weight: 100; font-style: normal; font-display: block;
+    src: url("fonts/barlow-condensed-100.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter"; font-weight: 400; font-style: normal; font-display: swap;
+    src: url("fonts/inter-400.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter"; font-weight: 500; font-style: normal; font-display: swap;
+    src: url("fonts/inter-500.woff2") format("woff2");
+  }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: #0A0705; overflow: hidden;
+    overscroll-behavior: none; -webkit-font-smoothing: antialiased;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #install {
+    position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 12px 24px; border: 0; border-radius: 8px; cursor: pointer;
+    background: #FF9E2C; color: #1A1206;
+    font: 500 16px/1 "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+    letter-spacing: .06em; white-space: nowrap;
+    box-shadow: 0 4px 0 #7A4A08, 0 10px 30px rgba(255, 138, 43, .18);
+    opacity: 0; pointer-events: none;
+    transition: opacity .45s ease, transform .18s ease, box-shadow .18s ease;
+    z-index: 2;
+  }
+  #install.show { opacity: .93; pointer-events: auto; }
+  #install:hover { transform: translateX(-50%) translateY(-1px); box-shadow: 0 5px 0 #7A4A08, 0 14px 34px rgba(255,138,43,.26); }
+  #install:active { transform: translateX(-50%) translateY(2px); box-shadow: 0 2px 0 #7A4A08; }
+  #install svg { width: 17px; height: 17px; }
+  #hint {
+    position: fixed; left: 50%; bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px));
+    transform: translateX(-50%); max-width: min(88vw, 430px);
+    padding: 10px 16px; border-radius: 8px;
+    background: rgba(23,16,9,.95); border: 1px solid rgba(196,182,154,.18);
+    color: #E8D9C6; font: 13px/1.6 "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+    text-align: center; opacity: 0; pointer-events: none;
+    transition: opacity .3s ease; z-index: 3;
+  }
+  #hint.show { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="stage"></canvas>
+<button id="install" type="button" aria-label="安装到桌面">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" />
+  </svg>
+  <span>下载到桌面</span>
+</button>
+<div id="hint"></div>
 <script>
 "use strict";
 /* ==========================================================================
-   谜底时钟 · 纯代码还原（Canvas 2D，零图片、零依赖、单文件）
+   辉光管时钟 —— 依据 pen 设计稿《时钟.pen》还原
    --------------------------------------------------------------------------
-   设计空间固定 2507 x 1343（与参考图同尺寸），所有几何常量均由参考图逐像素
-   测量得到；任意窗口尺寸下等比缩放并居中，因此始终与参考图 1:1。
-   数字变化时按霓虹管（nixie）方式起辉：随机跳字抖动 → 过亮落定 → 常驻微闪。
-   URL 参数：
-     ?t=23:08:36   固定时间     ?d=10/10  固定日期    ?w=SATURDAY 固定星期
-     ?static=1     关闭动画（逐像素比对用）
+   设计空间固定 1920 × 1080（与设计稿一致）；尺寸、颜色、圆角、渐变停靠点、
+   字体全部直接取自设计文件。设计稿里的四个 GLSL 着色器已逐行移植：
+     glow.glsl     → 径向渐变，falloff = pow(1-d, u_falloff)，叠加闪烁项
+     mesh.glsl     → 逐像素六边形线框（边线 + 芯线 + 暗角）
+     glass-v2.glsl → 轮廓边缘光 + 高斯高光带 + 壁厚柔光 + 管内反射
+     ambient.glsl  → 环境暖光晕 + 底色 + 暗角 + 颗粒
+   功能：跟随系统时间、数字起辉跳动、每只管独立忽明忽暗、可安装为 PWA。
    ========================================================================== */
 
-const DW = 2507, DH = 1343;
-
-/* --------------------------- 几何常量（实测值） --------------------------- */
-const GLASS = {
-  halfW: 134,            // 玻璃外壁半宽（实测最宽 269/2）
-  bodyTop: 520,
-  bodyBot: 898,
-  cornerR: 13,
-  /* 颈部 + 肩部 + 顶部小球的外轮廓：(y, 半宽)，逐 4px 实测 */
-  profile: [
-    [398, 4.5], [402, 9.0], [406, 10.5], [412, 9.5], [418, 9.5],
-    [422, 12.0], [426, 15.5], [430, 18.5], [434, 21.5], [438, 24.0],
-    [442, 26.0], [446, 29.0], [450, 33.0], [454, 36.0], [458, 40.5],
-    [462, 58.0], [466, 74.0], [470, 83.0], [474, 96.0], [478, 110.0],
-    [482, 116.0], [486, 119.0], [490, 121.0], [494, 122.5], [498, 125.0],
-    [502, 127.5], [506, 129.5], [510, 131.5], [514, 133.0], [518, 133.5],
-    [520, 134.0],
-  ],
-  /* 极板：实测左 215 右 419（±102），上沿 522 下沿 884；网孔区 226..408 / 536..866 */
-  plate: { x0: -102, x1: 102, y0: 522, y1: 884, meshX0: -91, meshX1: 91, meshY0: 536, meshY1: 866 },
-  base:  { x0: -130, x1: 130, y0: 912, y1: 978 },
+/* ------------------------- 设计稿常量（勿随意改） ------------------------- */
+const DESIGN = {
+  W: 1920, H: 1080, bg: "#0A0705",
+  ambient: { warm: [255, 138, 43], strength: 0.20, base: 0.022, centerY: 0.47 },
+  date: { y: 132, gap: 20, fill: "#A08669", dotFill: "#4A3A2C", dotSize: 6, fontSize: 24, spacing: 8 },
+  clock: { y: 330, h: 450, gap: 16 },
+  pool: { x: 290, y: 700, w: 1340, h: 200, color: [255, 138, 43], intensity: 0.30, falloff: 1.9, flicker: 0.12, seed: 5 },
+  tube: {
+    w: 230, h: 450,
+    halo: { color: [255, 122, 26], intensity: 0.38, falloff: 2.6, flicker: 0.16, seed: 0 },
+    body: {
+      x: 20, y: -32, w: 190, h: 412,
+      grad: [[0, "#241C16"], [0.1, "#120C08"], [0.28, "#070504"], [0.72, "#050403"], [1, "#0C0806"]],
+      inner: { color: "rgba(0,0,0,0.66)", blur: 34 },
+    },
+    frame: { x: 20, y: 0, w: 190, h: 380, radius: [95, 95, 16, 16], stroke: "rgba(255,255,255,0.122)", strokeWidth: 1.5 },
+    mesh: { x: 36, y: 34, w: 158, h: 296, cell: 5.5, wire: 1.05, gain: 0.8, vig: 0.85, color: [255, 154, 60], radius: 3 },
+    digit: {
+      x: 36, y: 34, w: 158, h: 296, fontSize: 340, family: '"Barlow Condensed"', weight: 100, dy: 23, dx: 8.5,
+      far: { color: "#FF4D00", blur: 50, alpha: 0.55 },
+      near: { color: "#FF8C1A", blur: 13, alpha: 0.88 },
+      core: { color: "#FFF7E8" },
+    },
+    rim: { x: 30, y: 352, w: 170, h: 4, radius: 2, grad: [[0, "rgba(255,217,160,0)"], [0.5, "rgba(255,217,160,0.40)"], [1, "rgba(255,217,160,0)"]] },
+    shell: { x: 20, y: -32, w: 190, h: 412, tint: [255, 243, 224], rim: 0.55, streak: 0.38, film: 0.05, reflect: 0.14 },
+    base: {
+      x: 0, y: 358, w: 230, h: 92, radius: [14, 14, 26, 26],
+      grad: [[0, "#3A2E20"], [0.28, "#1A130D"], [0.7, "#0C0806"], [1, "#1A1209"]],
+      stroke: "rgba(255,255,255,0.086)", strokeWidth: 1.5,
+      shading: [[0, "rgba(106,86,58,0.40)"], [0.3, "rgba(0,0,0,0)"], [0.62, "rgba(0,0,0,0)"], [1, "rgba(58,42,26,0.60)"]],
+      rim: { x: 4, y: 1, w: 222, h: 2.5, radius: 1.5, grad: [[0, "rgba(255,217,160,0.80)"], [0.22, "rgba(255,217,160,0.07)"], [0.78, "rgba(255,217,160,0.07)"], [1, "rgba(255,217,160,0.80)"]] },
+      step: { x: 12, y: 6, w: 206, h: 1.5, grad: [[0, "rgba(255,232,196,0)"], [0.5, "rgba(255,232,196,0.40)"], [1, "rgba(255,232,196,0)"]] },
+    },
+  },
+  colon: {
+    w: 56, h: 450,
+    halo: { x: -14, y: 138, w: 84, h: 146, color: [255, 122, 26], intensity: 0.26, falloff: 2.4, flicker: 0.18, seed: 3 },
+    wires: [
+      { x: 17, y: 172, w: 2, h: 246 }, { x: 37, y: 172, w: 2, h: 246 },
+      { x: 23.5, y: 214, w: 2, h: 204 }, { x: 30.5, y: 214, w: 2, h: 204 },
+    ],
+    wireGrad: [[0, "#8A7A5C"], [0.45, "#4A4034"], [1, "#241E18"]],
+    bulbs: [{ x: 20, y: 161.9 }, { x: 20, y: 203.9 }],
+    bulbGrad: [[0, "#524634"], [0.28, "#241C13"], [0.7, "#0E0A07"], [1, "#17120B"]],
+    specular: { x: 23, y: 166, w: 5, h: 8, fill: "rgba(255,255,255,0.24)", blur: 2 },
+    electrode: { dx: 7, dy: 4.6, w: 2, h: 9, fill: "#9A8A6A", radius: 1 },
+    glow: { dx: -7, dy: -4.9, w: 30, h: 30, color: [255, 106, 26], blur: 10 },
+    core: { dx: 4.5, dy: 4.1, w: 7, h: 12, fill: "#FFB86A" },
+    foot: {
+      x: 11, y: 398, w: 34, h: 46, radius: [5, 5, 12, 12],
+      grad: [[0, "#3A2E20"], [0.3, "#1A130D"], [0.72, "#0C0806"], [1, "#1A1209"]],
+      shading: [[0, "rgba(106,86,58,0.33)"], [0.32, "rgba(0,0,0,0)"], [0.62, "rgba(0,0,0,0)"], [1, "rgba(58,42,26,0.53)"]],
+      rim: { x: 2, y: 1, w: 30, h: 2, radius: 1, grad: [[0, "rgba(255,217,160,0.73)"], [0.28, "rgba(255,217,160,0.07)"], [0.72, "rgba(255,217,160,0.07)"], [1, "rgba(255,217,160,0.73)"]] },
+      step: { x: 5, y: 6, w: 24, h: 1, grad: [[0, "rgba(255,232,196,0)"], [0.5, "rgba(255,232,196,0.33)"], [1, "rgba(255,232,196,0)"]] },
+    },
+  },
 };
-const TUBE_CX = [316, 644, 1085, 1413, 1855, 2182.5];
-const SEP_CX  = [864.5, 1633.5];
+const GLASS_D = "M0 127a95 95 0 0 1 86.7-94.64c0-4.86 0.5-7.56 1.9-10.16-3-1.8-4.8-4.8-4.8-8.2 0-6.4 5.1-11.8 11.2-11.8 6.1 0 11.2 5.4 11.2 11.8 0 3.4-1.8 6.4-4.8 8.2 1.4 2.6 1.9 5.3 1.9 10.16a95 95 0 0 1 86.7 94.64l0 237a16 16 0 0 1-16 16l-158 0a16 16 0 0 1-16-16z";
+const BULB_D = "M8 0.6c1.2 0 1.9 1.1 1.9 2.5 3.3 1.4 5.5 4.5 5.5 8.3 0 4.8-3.3 8.2-7.4 8.2-4.1 0-7.4-3.4-7.4-8.2 0-3.8 2.2-6.9 5.5-8.3 0-1.4 0.7-2.5 1.9-2.5z";
+const GLASS_PATH = new Path2D(GLASS_D);
+const BULB_PATH = new Path2D(BULB_D);
 
-const LAYER = { hw: 170, y0: 380, h: 620 };
-const GLOW  = { hw: 160, y0: 495, h: 415 };
-
-/* ------------------------------- 字形（矢量） ------------------------------ */
-/* 每个数字 = 若干条“笔画中心线”，点坐标为 0..100 归一化盒内的实测骨架；
-   弯折处用 Catmull-Rom 转三次贝塞尔平滑，直角处拆成独立子路径以保留锐角。 */
-function catmullPath(pts, closed) {
-  const p = new Path2D();
-  const n = pts.length;
-  const at = (i) => closed ? pts[(i % n + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
-  p.moveTo(pts[0][0], pts[0][1]);
-  const segs = closed ? n : n - 1;
-  for (let i = 0; i < segs; i++) {
-    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
-    p.bezierCurveTo(
-      p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
-      p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
-      p2[0], p2[1]);
-  }
-  if (closed) p.closePath();
-  return p;
-}
-function ellipsePath(cx, cy, rx, ry) {
-  const pts = [];
-  for (let i = 0; i < 14; i++) {
-    const a = i / 14 * Math.PI * 2 - Math.PI / 2;
-    pts.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
-  }
-  return catmullPath(pts, true);
-}
-function buildGlyph(def) {
-  const p = new Path2D();
-  for (const sub of def.sub) {
-    const path = sub.e ? ellipsePath(sub.e[0], sub.e[1], sub.e[2], sub.e[3])
-                        : catmullPath(sub.p, !!sub.closed);
-    p.addPath(path);
-  }
-  return p;
-}
-
-/* 目标尺寸/中心：全部来自对参考图骨架的实测（六个数字高均 ≈300px） */
-const GLYPH_DEF = {
-  "0": { w: 151, h: 305, cy: 698, sub: [{ e: [50, 50, 49, 49] }] },
-  "2": { w: 158, h: 305, cy: 693, sub: [
-    { p: [[1,38],[2,24],[8,17],[18,10],[33,3],[50,0],[67,3],[83,10],[93,17],[99,24],[100,31],
-          [98,38],[92,45],[82,52],[70,59],[56,66],[42,73],[28,80],[16,86],[7,92],[3,96]] },
-    { p: [[3,97],[100,97]] } ] },
-  "3": { w: 161, h: 296, cy: 708, sub: [
-    { p: [[3,1],[50,1],[95,1],[54,33]] },
-    { p: [[54,33],[62,38],[78,44],[92,51],[99,60],[100,68],[97,78],[89,86],[76,93],[60,99],
-          [50,101],[30,97],[12,89],[0,79]] } ] },
-  "6": { w: 159, h: 300, cy: 702, sub: [
-    { p: [[50,0],[43,7],[36,13],[28,20],[22,27],[16,33],[12,40],[8,47],[8,53],[3,60],[0,67],
-          [1,73],[4,80],[11,87],[25,93],[50,100],[77,93],[90,87],[96,80],[99,73],[100,67],
-          [96,60],[89,53],[70,47],[45,44],[30,46]] } ] },
-  "8": { w: 162, h: 303, cy: 704, sub: [
-    { closed: true, p: [[50,1],[63,7],[80,13],[88,20],[90,26],[85,33],[72,40],[58,46],
-                        [58,50],[42,50],[26,45],[17,38],[12,32],[13,26],[17,20],[25,13],[37,7]] },
-    { closed: true, p: [[58,50],[70,53],[86,59],[97,66],[100,73],[98,80],[91,86],[76,92],
-                        [50,100],[24,92],[9,86],[3,80],[0,73],[2,66],[13,59],[28,53],[42,50]] } ] },
-  "1": { w: 62, h: 300, cy: 702, sub: [
-    { p: [[28,20],[52,0],[52,99]] }, { p: [[22,99],[84,99]] } ] },
-  "4": { w: 158, h: 300, cy: 704, sub: [
-    { p: [[76,0],[4,68],[97,68]] }, { p: [[76,0],[76,100]] } ] },
-  "5": { w: 155, h: 300, cy: 704, sub: [
-    { p: [[93,2],[18,2],[13,45],[42,35],[70,37],[92,52],[95,72],[84,90],[58,99],[32,96],[10,86]] } ] },
-  "7": { w: 160, h: 300, cy: 704, sub: [
-    { p: [[4,4],[98,4],[40,100]] } ] },
-  "9": { w: 159, h: 300, cy: 702, sub: [
-    { p: [[50,100],[57,93],[64,87],[72,80],[78,73],[84,67],[88,60],[92,53],[92,47],[97,40],[100,33],
-          [99,27],[96,20],[89,13],[75,7],[50,0],[23,7],[10,13],[4,20],[1,27],[0,33],
-          [4,40],[11,47],[30,53],[55,56],[70,54]] } ] },
-};
-const GLYPHS = {}, GLYPH_BOX = {};
-for (const k in GLYPH_DEF) GLYPHS[k] = buildGlyph(GLYPH_DEF[k]);
-/* 启动时量出每条路径的中心线包围盒，用它把字形精确缩放到实测尺寸 */
-(function () {
-  const S = 4, PAD = 60, N = 100 * S + PAD * 2;
-  const c = document.createElement("canvas");
-  c.width = c.height = N;
-  const g = c.getContext("2d");
-  g.setTransform(S, 0, 0, S, PAD, PAD);
-  g.lineWidth = 1 / S; g.lineCap = "round"; g.lineJoin = "round"; g.strokeStyle = "#fff";
-  for (const k in GLYPHS) {
-    g.clearRect(-PAD, -PAD, N, N);
-    g.stroke(GLYPHS[k]);
-    const d = g.getImageData(0, 0, N, N).data;
-    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (d[(y * N + x) * 4 + 3] > 10) {
-        if (x < x0) x0 = x; if (x > x1) x1 = x;
-        if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
-    }
-    GLYPH_BOX[k] = { x0: (x0 - PAD) / S, y0: (y0 - PAD) / S, x1: (x1 - PAD) / S, y1: (y1 - PAD) / S };
-  }
-})();
-
-/* --------------------------------- 参数 --------------------------------- */
+/* ------------------------------- 基础工具 -------------------------------- */
 const Q = new URLSearchParams(location.search);
 const STATIC = Q.get("static") === "1";
+const ICON_MODE = Q.get("icon") === "1";
 const FIXED_T = Q.get("t"), FIXED_D = Q.get("d"), FIXED_W = Q.get("w");
 
-/* -------------------------------- 画布 ---------------------------------- */
-/* 全屏柔光：亮部降采样→模糊→加法叠回，让灯丝、玻璃边缘、金属件都不再“硬” */
-const BLOOM = 0.55;
-const bloomCv = document.createElement("canvas");
-const bloomG = bloomCv.getContext("2d");
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const smooth = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+const rect = (g, x, y, w, h, r) => { g.beginPath(); g.roundRect(x, y, w, h, r); };
+function gradV(g, y0, y1, stops, rev) {
+  const gr = g.createLinearGradient(0, rev ? y1 : y0, 0, rev ? y0 : y1);
+  for (const [p, c] of stops) gr.addColorStop(p, c);
+  return gr;
+}
+function gradH(g, x0, x1, stops) {
+  const gr = g.createLinearGradient(x0, 0, x1, 0);
+  for (const [p, c] of stops) gr.addColorStop(p, c);
+  return gr;
+}
+/* glow.glsl → 椭圆径向渐变（按元素自身归一化，故用 scale 造椭圆） */
+function glowFill(g, cx, cy, rx, ry, color, falloff, alpha, steps) {
+  steps = steps || 16;
+  g.save();
+  g.globalAlpha = alpha === undefined ? 1 : alpha;
+  g.translate(cx, cy); g.scale(Math.max(rx, 0.001), Math.max(ry, 0.001));
+  const gr = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+  for (let i = 0; i <= steps; i++) {
+    const d = i / steps;
+    gr.addColorStop(d, rgba(color, Math.pow(Math.max(0, 1 - d), falloff)));
+  }
+  g.fillStyle = gr;
+  g.beginPath(); g.arc(0, 0, 1, 0, 7); g.fill();
+  g.restore();
+}
 
+/* glass-v2 的高斯高光项：exp(-((x-μ)/σ)²) */
+function gaussFill(g, cx, cy, sx, sy, color, alpha, k) {
+  k = k || 2.6;
+  g.save();
+  g.globalAlpha = clamp(alpha, 0, 1);
+  g.translate(cx, cy); g.scale(Math.max(sx, 0.001) * k, Math.max(sy, 0.001) * k);
+  const gr = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+  for (let i = 0; i <= 18; i++) {
+    const d = i / 18, t = d * k;
+    gr.addColorStop(d, rgba(color, Math.exp(-t * t)));
+  }
+  g.fillStyle = gr;
+  g.beginPath(); g.arc(0, 0, 1, 0, 7); g.fill();
+  g.restore();
+}
+
+/* mesh.glsl → 逐像素六边形线框（生成一次，六只管复用） */
+function buildMesh(w, h, cfg, ss) {
+  const W = Math.max(1, Math.round(w * ss)), H = Math.max(1, Math.round(h * ss));
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const img = g.createImageData(W, H), d = img.data;
+  const wire = cfg.wire / cfg.cell;    // 线宽换算到“格”为单位（shader: u_wire / u_cell）
+  const R1 = 1.7320508, NRM = 1 / Math.hypot(1, R1);
+  const col = cfg.color, span = Math.max(0.05, cfg.vig - 0.25);
+  for (let y = 0; y < H; y++) {
+    const fy = (y + 0.5) / ss, uy = fy / cfg.cell;
+    for (let x = 0; x < W; x++) {
+      const fx = (x + 0.5) / ss, ux = fx / cfg.cell;
+      const ax = ux - Math.floor(ux) - 0.5, ay = uy - Math.floor(uy / R1) * R1 - 0.8660254;
+      const px = ux - 0.5, py = uy - 0.8660254;
+      const bx = px - Math.floor(px) - 0.5, by = py - Math.floor(py / R1) * R1 - 0.8660254;
+      const da = ax * ax + ay * ay, db = bx * bx + by * by;
+      const gx = da < db ? ax : bx, gy = da < db ? ay : by;
+      const adx = Math.abs(gx), ady = Math.abs(gy);
+      const edge = 0.5 - Math.max((adx + ady * R1) * NRM, adx);
+      const wireV = 1 - smooth(edge / wire);
+      const coreV = 1 - smooth(edge / (wire * 0.45));
+      const nx = (fx / w - 0.5) * 2, ny = (fy / h - 0.5) * 2;
+      const vigV = 1 - smooth((Math.hypot(nx, ny) - 0.25) / span);
+      const amt = (wireV * (0.13 + 1.05 * vigV) + coreV * 0.30 * vigV) * cfg.gain;
+      const i = (y * W + x) * 4;
+      d[i] = Math.min(255, col[0] * amt);
+      d[i + 1] = Math.min(255, col[1] * amt);
+      d[i + 2] = Math.min(255, col[2] * amt);
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/* -------------------------------- 画布 ---------------------------------- */
 const cv = document.getElementById("stage");
 const ctx = cv.getContext("2d");
-let vs = 1, vox = 0, voy = 0, SS = 1, GS = 1;
+let S = 1, ox = 0, oy = 0, dpr = 1;
 
-function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = window.innerWidth, h = window.innerHeight;
-  cv.width = Math.round(w * dpr);
-  cv.height = Math.round(h * dpr);
-  cv.style.width = w + "px";
-  cv.style.height = h + "px";
-  const s = Math.min(w / DW, h / DH);
-  vs = s * dpr;
-  vox = (w * dpr - DW * vs) / 2;
-  voy = (h * dpr - DH * vs) / 2;
-  // 关键：离屏层按“设计单位 × 当前设备缩放”光栅化。
-  // 若固定按设计分辨率渲染再缩小，细密网孔会被降采样成摩尔纹，看起来又硬又脏。
-  SS = Math.min(2, Math.max(0.55, vs));
-  GS = SS;
-  bloomCv.width = Math.max(1, Math.round(cv.width / 4));
-  bloomCv.height = Math.max(1, Math.round(cv.height / 4));
-  buildPatterns();
-  buildGlowCanvas();
-  buildTubeLayers();
+const meshCv = document.createElement("canvas");
+const tubeStatic = [], tubeShell = [], colonStatic = [], digitCache = [];
+const glowCv = document.createElement("canvas");
+const glowG = glowCv.getContext("2d");
+const ambCv = document.createElement("canvas");
+const ambG = ambCv.getContext("2d");
+const haloCv = document.createElement("canvas");
+const rimCv = document.createElement("canvas");
+const softCv = document.createElement("canvas");
+const shellCv = document.createElement("canvas");
+const shellMask = new Path2D();
+shellMask.addPath(GLASS_PATH, new DOMMatrix().translate(DESIGN.tube.shell.x, DESIGN.tube.shell.y));
+let grainTile = null;
+
+/* 时钟横向布局：3 组「两只管」+ 2 个分隔灯，整体居中 */
+const GAP = DESIGN.clock.gap;
+const TUBE_X = [], COLON_X = [];
+{
+  let x = (DESIGN.W - (6 * DESIGN.tube.w + 2 * DESIGN.colon.w + 8 * GAP)) / 2;
+  for (let p = 0; p < 3; p++) {
+    TUBE_X.push(x, x + DESIGN.tube.w + GAP);
+    x += 2 * DESIGN.tube.w + GAP;
+    if (p < 2) {
+      COLON_X.push(x + GAP);
+      x += GAP + DESIGN.colon.w + GAP;
+    }
+  }
 }
 
-/* ------------------------------ 蜂窝网图案 ------------------------------- */
-/* 实测：孔距 ≈ 11.6px，孔径 ≈ 0.58 倍孔距 */
-const MESH = { pitch: 10.2, hole: 0.62, r: 0.46 };
-
-let holePat = null;
-
-function makePattern(webColor, holeColor) {
-  // 每个图案 tile 直接按设备像素大小生成：缩放后不会产生摩尔纹
-  const t = Math.max(4, Math.round(MESH.pitch * vs));
-  const c = document.createElement("canvas");
-  c.width = c.height = t;
-  const g = c.getContext("2d");
-  if (webColor) { g.fillStyle = webColor; g.fillRect(0, 0, t, t); }
-  // 圆角方孔 + 轻微模糊：孔径约为孔距的 0.62，边缘柔化以贴近实拍金属网
-  const hs = t * MESH.hole, r = hs * MESH.r, o = (t - hs) / 2;
-  g.filter = `blur(${Math.max(0.45, t * 0.07)}px)`;
-  g.fillStyle = holeColor;
-  g.beginPath();
-  g.moveTo(o + r, o);
-  g.arcTo(o + hs, o, o + hs, o + hs, r);
-  g.arcTo(o + hs, o + hs, o, o + hs, r);
-  g.arcTo(o, o + hs, o, o, r);
-  g.arcTo(o, o, o + hs, o, r);
-  g.closePath();
-  g.fill();
-  g.filter = "none";
-  const p = ctx.createPattern(c, "repeat");
-  p.setTransform(new DOMMatrix().scale(1 / (t / MESH.pitch)));
-  return p;
-}
-function buildPatterns() {
-  // 乘法网：网线为白（不改变亮度），孔洞压暗 → 发光透过时孔比网暗
-  holePat = makePattern(null, "rgba(0,0,0,0.74)");   // 网线透明 + 孔洞压暗
+/* ------------------------------ 图层构建 -------------------------------- */
+function strokeBlurred(g, path, color, width, blur, ss) {
+  g.save();
+  g.filter = `blur(${blur * ss}px)`;
+  g.strokeStyle = color;
+  g.lineWidth = width;
+  g.lineJoin = "round";
+  g.stroke(path);
+  g.restore();
 }
 
-/* ------------------------------- 路径工具 -------------------------------- */
-function glassPath(cx) {
-  const G = GLASS, r = G.cornerR, bot = G.bodyBot;
-  const p = new Path2D();
-  p.moveTo(cx - G.profile[0][1], G.profile[0][0]);
-  // 左半轮廓（颈部→肩部）
-  for (const [y, hw] of G.profile) p.lineTo(cx - hw, y);
-  // 直筒段（略微内收）
-  p.lineTo(cx - 133.5, bot - 40);
-  p.lineTo(cx - 133, bot - r);
-  p.quadraticCurveTo(cx - 132.5, bot + 12, cx - 118, bot + 12);
-  p.lineTo(cx + 118, bot + 12);
-  p.quadraticCurveTo(cx + 132.5, bot + 12, cx + 133, bot - r);
-  p.lineTo(cx + 133.5, bot - 40);
-  // 右半轮廓（肩部→颈部，反向）
-  for (let i = G.profile.length - 1; i >= 0; i--) p.lineTo(cx + G.profile[i][1], G.profile[i][0]);
-  p.closePath();
-  return p;
-}
-function digitPath(d, cx) {
-  const t = GLYPH_DEF[d] || GLYPH_DEF["0"];
-  const b = GLYPH_BOX[d] || GLYPH_BOX["0"];
-  const bw = Math.max(1e-3, b.x1 - b.x0), bh = Math.max(1e-3, b.y1 - b.y0);
-  const m = new DOMMatrix()
-    .translate(cx, t.cy)
-    .scale(t.w / bw, t.h / bh)
-    .translate(-(b.x0 + b.x1) / 2, -(b.y0 + b.y1) / 2);
-  const p = new Path2D();
-  p.addPath(GLYPHS[d] || GLYPHS["0"], m);
-  return p;
-}
-function roundRect(g, x, y, w, h, r) {
-  g.beginPath();
-  g.moveTo(x + r, y);
-  g.arcTo(x + w, y, x + w, y + h, r);
-  g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r);
-  g.arcTo(x, y, x + w, y, r);
-  g.closePath();
+function drawBase(g, b) {
+  g.save();
+  rect(g, b.x, b.y, b.w, b.h, b.radius); g.clip();
+  g.fillStyle = gradV(g, b.y, b.y + b.h, b.grad);
+  g.fillRect(b.x, b.y, b.w, b.h);
+  g.fillStyle = gradH(g, b.x, b.x + b.w, b.shading);
+  g.fillRect(b.x, b.y, b.w, b.h);
+  g.fillStyle = gradH(g, b.rim.x, b.rim.x + b.rim.w, b.rim.grad);
+  rect(g, b.rim.x, b.rim.y, b.rim.w, b.rim.h, b.rim.radius || 1); g.fill();
+  g.fillStyle = gradH(g, b.step.x, b.step.x + b.step.w, b.step.grad);
+  g.fillRect(b.step.x, b.step.y, b.step.w, b.step.h);
+  g.restore();
+  if (b.stroke) {
+    g.strokeStyle = b.stroke; g.lineWidth = b.strokeWidth;
+    rect(g, b.x, b.y, b.w, b.h, b.radius); g.stroke();
+  }
 }
 
-/* --------------------------- 每只管子的静态层 ---------------------------- */
-const tubeLayers = TUBE_CX.map(() => ({}));
+function buildTubeStatic(i) {
+  const T = DESIGN.tube;
+  const ss = clamp(S * dpr, 0.75, 2);
+  const W = Math.round(T.w * ss), H = Math.round(T.h * ss);
+  tubeStatic[i] = tubeStatic[i] || document.createElement("canvas");
+  tubeShell[i] = tubeShell[i] || document.createElement("canvas");
+  tubeStatic[i].width = W; tubeStatic[i].height = H;
+  tubeShell[i].width = W; tubeShell[i].height = H;
 
-function buildTubeLayers() {
-  TUBE_CX.forEach((cx, i) => {
-    const ss = SS;
-    const mk = () => {
-      const c = document.createElement("canvas");
-      c.width = Math.round(LAYER.hw * 2 * ss);
-      c.height = Math.round(LAYER.h * ss);
-      const g = c.getContext("2d");
-      g.setTransform(ss, 0, 0, ss, -(cx - LAYER.hw) * ss, -LAYER.y0 * ss);
-      return [c, g];
-    };
-    const [under, gu] = mk(), [over, go] = mk();
-    drawUnder(gu, cx);
-    drawOver(go, cx);
-    tubeLayers[i] = { under, over };
+  /* ---- 静态层：玻璃体 → 内阴影 → 玻璃框 → 阳极网 → 底沿 → 底座 ---- */
+  const g = tubeStatic[i].getContext("2d");
+  g.setTransform(ss, 0, 0, ss, 0, 0);
+  g.clearRect(0, 0, T.w, T.h);
+  const bodyPath = new Path2D();
+  bodyPath.addPath(GLASS_PATH, new DOMMatrix().translate(T.body.x, T.body.y));
+
+  g.save();
+  g.fillStyle = gradV(g, T.body.y, T.body.y + T.body.h, T.body.grad);
+  g.fill(bodyPath);
+  g.clip(bodyPath);
+  strokeBlurred(g, bodyPath, T.body.inner.color, T.body.inner.blur * 2, T.body.inner.blur * 0.5, ss);
+  g.restore();
+
+  g.strokeStyle = T.frame.stroke;
+  g.lineWidth = T.frame.strokeWidth;
+  rect(g, T.frame.x, T.frame.y, T.frame.w, T.frame.h, T.frame.radius); g.stroke();
+
+  g.save();
+  rect(g, T.mesh.x, T.mesh.y, T.mesh.w, T.mesh.h, T.mesh.radius);
+  g.clip();
+  g.globalCompositeOperation = "screen";
+  g.drawImage(meshCv, T.mesh.x, T.mesh.y, T.mesh.w, T.mesh.h);
+  g.restore();
+
+  g.fillStyle = gradH(g, T.rim.x, T.rim.x + T.rim.w, T.rim.grad);
+  rect(g, T.rim.x, T.rim.y, T.rim.w, T.rim.h, T.rim.radius); g.fill();
+
+  drawBase(g, T.base);
+
+  /* ---- 玻璃罩反光层（glass-v2.glsl） ---- */
+  const sg = tubeShell[i].getContext("2d");
+  sg.setTransform(ss, 0, 0, ss, 0, 0);
+  sg.clearRect(0, 0, T.w, T.h);
+  drawGlassShell(sg, T.shell, ss);
+}
+
+/* glass-v2.glsl 移植 */
+function drawGlassShell(g, cfg, ss) {
+  const W = cfg.w, H = cfg.h, tint = cfg.tint;
+  g.save();
+  g.translate(cfg.x, cfg.y);
+  g.beginPath(); g.rect(0, 0, W, H); g.clip();
+  g.globalCompositeOperation = "screen";
+
+  /* 1) 玻璃壁边缘光：rim^1.25 × vmod × lmod */
+  rimCv.width = Math.round(W * ss); rimCv.height = Math.round(H * ss);
+  const rg = rimCv.getContext("2d");
+  rg.setTransform(ss, 0, 0, ss, 0, 0);
+  rg.clearRect(0, 0, W, H);
+  strokeBlurred(rg, GLASS_PATH, rgba(tint, 1), 22, 8, ss);
+  rg.globalCompositeOperation = "destination-in";
+  rg.fillStyle = "#ffffff";
+  rg.fill(GLASS_PATH);
+  rg.globalCompositeOperation = "source-over";
+  /* 用 destination-in 乘 alpha 来施加 vmod × lmod 调制
+     （注意：multiply 画在透明底上会把整层涂白，是上一版的 bug） */
+  rg.globalCompositeOperation = "destination-in";
+  rg.fillStyle = gradH(rg, 0, W, [[0, "#ffffffff"], [0.16, "#ffffffff"], [0.88, "#ffffff99"], [1, "#ffffff99"]]);
+  rg.fillRect(0, 0, W, H);
+  const vstops = [];
+  for (let i = 0; i <= 10; i++) {
+    const py = i / 10 * H, vy = ((1 - py / H) - 0.72) / 0.58;
+    const a = Math.max(0, Math.min(1, (0.20 + 0.95 * Math.exp(-vy * vy)) / 1.15));
+    vstops.push([i / 10, `rgba(255,255,255,${a.toFixed(3)})`]);
+  }
+  rg.fillStyle = gradV(rg, 0, H, vstops);
+  rg.fillRect(0, 0, W, H);
+  rg.globalCompositeOperation = "source-over";
+  g.globalAlpha = cfg.rim;
+  g.drawImage(rimCv, 0, 0, W, H);
+  g.globalAlpha = 1;
+
+  /* 2) 高斯高光：左侧主光带 / 右侧细光带 / 穹顶双侧 / 排气孔 */
+  const streaks = [
+    [0.115, 0.44, 0.055, 0.34, 1.00],
+    [0.905, 0.46, 0.020, 0.26, 0.45],
+    [0.240, 0.85, 0.180, 0.13, 0.60],
+    [0.760, 0.86, 0.160, 0.12, 0.32],
+    [0.462, 0.955, 0.022, 0.045, 0.85],
+  ];
+  for (const [ux, uy, sx, sy, k] of streaks) {
+    gaussFill(g, ux * W, (1 - uy) * H, sx * W, sy * H, tint, k * cfg.streak);
+  }
+
+  /* 3) 壁厚柔光 */
+  softCv.width = Math.round(W * ss); softCv.height = Math.round(H * ss);
+  const sg2 = softCv.getContext("2d");
+  sg2.setTransform(ss, 0, 0, ss, 0, 0);
+  sg2.clearRect(0, 0, W, H);
+  strokeBlurred(sg2, GLASS_PATH, rgba(tint, 1), 36, 14, ss);
+  sg2.globalCompositeOperation = "destination-in";
+  sg2.fillStyle = "#ffffff";
+  sg2.fill(GLASS_PATH);
+  sg2.globalCompositeOperation = "source-over";
+  g.globalAlpha = cfg.film;
+  g.drawImage(softCv, 0, 0, W, H);
+  g.globalAlpha = 1;
+
+  /* 4) 管内暖反射 */
+  gaussFill(g, 0.52 * W, (1 - 0.32) * H, 0.28 * W, 0.30 * H, tint, cfg.reflect);
+
+  /* 5) 用「轮廓 + 4px 外扩」做蒙版：保留轮廓上的边缘光，但切掉飘到外面的雾状光 */
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = "destination-in";
+  g.fillStyle = "#ffffff";
+  g.fill(GLASS_PATH);
+  g.globalCompositeOperation = "source-over";
+  g.restore();
+}
+
+function buildColonStatic(i) {
+  const C = DESIGN.colon;
+  const ss = clamp(S * dpr, 0.75, 2);
+  colonStatic[i] = colonStatic[i] || document.createElement("canvas");
+  colonStatic[i].width = Math.round(C.w * ss);
+  colonStatic[i].height = Math.round(C.h * ss);
+  const g = colonStatic[i].getContext("2d");
+  g.setTransform(ss, 0, 0, ss, 0, 0);
+  g.clearRect(0, 0, C.w, C.h);
+
+  for (const w of C.wires) {
+    g.fillStyle = gradV(g, w.y, w.y + w.h, C.wireGrad);
+    rect(g, w.x, w.y, w.w, w.h, 1.2); g.fill();
+  }
+  for (const b of C.bulbs) {
+    g.save();
+    g.translate(b.x, b.y);
+    g.fillStyle = gradV(g, 0, 20.2, C.bulbGrad);
+    g.fill(BULB_PATH);
+    g.restore();
+    g.fillStyle = C.electrode.fill;
+    rect(g, b.x + C.electrode.dx, b.y + C.electrode.dy, C.electrode.w, C.electrode.h, C.electrode.radius); g.fill();
+    g.save();
+    g.filter = `blur(${C.specular.blur * ss}px)`;
+    g.fillStyle = C.specular.fill;
+    g.beginPath(); g.ellipse(b.x + C.specular.x + 2.5, b.y + C.specular.y, 2.5, 4, 0, 0, 7); g.fill();
+    g.restore();
+    g.fillStyle = C.core.fill;
+    g.beginPath(); g.ellipse(b.x + C.core.dx + 3.5, b.y + C.core.dy + 6, 3.5, 6, 0, 0, 7); g.fill();
+  }
+  drawBase(g, {
+    x: C.foot.x, y: C.foot.y, w: C.foot.w, h: C.foot.h, radius: C.foot.radius,
+    grad: C.foot.grad, shading: C.foot.shading, rim: C.foot.rim, step: C.foot.step,
   });
 }
 
-/* 底层：底座 / 玻璃暗腔 / 极板 + 金属框 + 蜂窝网 */
-function drawUnder(g, cx) {
-  const G = GLASS, B = G.base, P = G.plate;
+/* 玻璃罩层：叠加前再按玻璃轮廓裁一次，确保不会有光飘到轮廓外 */
+const shellSS = () => clamp(S * dpr, 0.75, 2);
+function shellLayer(i) {
+  const ss = shellSS();
+  const W = Math.round(DESIGN.tube.w * ss), H = Math.round(DESIGN.tube.h * ss);
+  if (shellCv.width !== W || shellCv.height !== H) { shellCv.width = W; shellCv.height = H; }
+  const g = shellCv.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = "source-over";
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+  g.drawImage(tubeShell[i], 0, 0);
+  g.globalCompositeOperation = "destination-in";
+  g.setTransform(ss, 0, 0, ss, 0, 0);
+  g.fillStyle = "#ffffff";
+  g.fill(shellMask);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = "source-over";
+  return shellCv;
+}
 
-  /* ---- 底座：实测是一整块 260x66 的暗板，中央一道暗缝、两侧各有亮区 ---- */
-  const bw = B.x1 - B.x0;
-  const bg = g.createLinearGradient(cx + B.x0, 0, cx + B.x1, 0);
-  // (相对中心的偏移, 亮度) —— 直接来自参考图横向剖面
-  const prof = [[-130,2],[-124,2],[-116,6],[-108,11],[-100,17],[-92,20],[-84,24],[-76,23],
-                [-68,23],[-60,23],[-52,20],[-44,18],[-36,15],[-28,14],[-20,11],[-12,10],
-                [-4,8],[4,4],[12,7],[20,10],[28,14],[36,17],[44,21],[52,24],[60,28],[68,26],
-                [76,24],[84,21],[92,18],[100,15],[108,11],[116,10],[124,5],[130,3]];
-  for (const [dx, v] of prof) {
-    const t = (dx - B.x0) / bw;
-    bg.addColorStop(Math.min(1, Math.max(0, t)), `rgb(${v},${v},${v + 2})`);
+/* 数字层：Glow Far（blur 50 / .55）→ Glow Near（blur 13 / .88）→ Digit */
+function renderDigit(i, ch) {
+  const D = DESIGN.tube.digit;
+  const ss = clamp(S * dpr, 0.75, 2);
+  if (!digitCache[i]) digitCache[i] = { ch: null, cv: document.createElement("canvas") };
+  const slot = digitCache[i];
+  if (slot.ch === ch && slot.ss === ss) return slot.cv;
+  const c = slot.cv;
+  c.width = Math.round(D.w * ss); c.height = Math.round(D.h * ss);
+  const g = c.getContext("2d");
+  g.setTransform(ss, 0, 0, ss, 0, 0);
+  g.clearRect(0, 0, D.w, D.h);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.font = `${D.weight} ${D.fontSize}px ${D.family}`;
+  const cx = D.w / 2 + (D.dx || 0), cy = D.h / 2 + D.dy;
+  g.save(); g.globalAlpha = D.far.alpha; g.filter = `blur(${D.far.blur * ss}px)`;
+  g.fillStyle = D.far.color; g.fillText(ch, cx, cy); g.restore();
+  g.save(); g.globalAlpha = D.near.alpha; g.filter = `blur(${D.near.blur * ss}px)`;
+  g.fillStyle = D.near.color; g.fillText(ch, cx, cy); g.restore();
+  g.fillStyle = D.core.color; g.fillText(ch, cx, cy);
+  slot.ch = ch; slot.ss = ss;
+  return c;
+}
+
+/* 环境层：ambient.glsl 拆成「底色+暗角」（静态）与「暖光晕」（按闪烁叠加） */
+function buildAmbient() {
+  const w = 480, h = 270, B = DESIGN.ambient;
+  ambCv.width = haloCv.width = w;
+  ambCv.height = haloCv.height = h;
+  const g = ambG;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = "source-over";
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = DESIGN.bg; g.fillRect(0, 0, w, h);
+  const bstops = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10, v = B.base * (0.55 + 0.9 * (1 - t)) * 255;
+    bstops.push([t, `rgb(${v | 0},${v * 0.96 | 0},${v * 0.92 | 0})`]);
   }
+  g.fillStyle = gradV(g, 0, h, bstops);
+  g.fillRect(0, 0, w, h);
+  /* 暗角：col *= mix(0.70, 1.0, smoothstep(1.30, 0.28, len(uv-0.5))) */
   g.save();
-  g.filter = "blur(1.6px)";                 // 底座边缘同样羽化
-  g.fillStyle = bg;
-  g.fillRect(cx + B.x0, B.y0, bw, B.y1 - B.y0);
+  g.translate(0.5 * w, 0.5 * h); g.scale(w * 0.5, h * 0.5);
+  const vg = g.createRadialGradient(0, 0, 0.28, 0, 0, 1.30);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(0.55, "rgba(0,0,0,0.12)");
+  vg.addColorStop(1, "rgba(0,0,0,0.30)");
+  g.fillStyle = vg; g.fillRect(-1.45, -1.45, 2.9, 2.9);
   g.restore();
-  // 上下边缘各 3px 过渡，避免出现硬直角“塑料块”
-  const fadeT = g.createLinearGradient(0, B.y0 - 4, 0, B.y0 + 4);
-  fadeT.addColorStop(0, "rgba(0,0,0,1)"); fadeT.addColorStop(0.5, "rgba(0,0,0,0.35)"); fadeT.addColorStop(1, "rgba(0,0,0,0)");
-  g.fillStyle = fadeT; g.fillRect(cx + B.x0, B.y0 - 4, bw, 8);
-  const fadeB = g.createLinearGradient(0, B.y1 - 4, 0, B.y1 + 4);
-  fadeB.addColorStop(0, "rgba(0,0,0,0)"); fadeB.addColorStop(0.5, "rgba(0,0,0,0.35)"); fadeB.addColorStop(1, "rgba(0,0,0,1)");
-  g.fillStyle = fadeB; g.fillRect(cx + B.x0, B.y1 - 4, bw, 8);
-
-  /* ---- 玻璃内腔 ---- */
-  const gp = glassPath(cx);
-  g.save();
-  g.clip(gp);
-  const ig = g.createLinearGradient(cx - G.halfW, 0, cx + G.halfW, 0);
-  ig.addColorStop(0.00, "#2f2a24");
-  ig.addColorStop(0.10, "#201d1a");
-  ig.addColorStop(0.35, "#0c0c0c");
-  ig.addColorStop(0.72, "#080808");
-  ig.addColorStop(1.00, "#050505");
-  g.fillStyle = ig;
-  g.fillRect(cx - G.halfW, 380, G.halfW * 2, 620);
-  // 内腔整体“上亮下暗”（实测 560 行 ~75，850 行 ~22）
-  const vg0 = g.createLinearGradient(0, 500, 0, 910);
-  vg0.addColorStop(0, "rgba(0,0,0,0)");
-  vg0.addColorStop(0.35, "rgba(0,0,0,0.18)");
-  vg0.addColorStop(0.72, "rgba(0,0,0,0.45)");
-  vg0.addColorStop(1, "rgba(0,0,0,0.60)");
-  g.fillStyle = vg0;
-  g.fillRect(cx - G.halfW, 500, G.halfW * 2, 410);
-  // 穹顶压暗
-  const tg = g.createLinearGradient(0, 420, 0, 545);
-  tg.addColorStop(0, "rgba(0,0,0,0.68)");
-  tg.addColorStop(0.55, "rgba(0,0,0,0.34)");
-  tg.addColorStop(1, "rgba(0,0,0,0)");
-  g.fillStyle = tg;
-  g.fillRect(cx - G.halfW, 396, G.halfW * 2, 150);
-
-  /* ---- 极板 ---- */
-  const x0 = cx + P.x0, x1 = cx + P.x1;
-  // 金属框：左右压条按实测（左峰 126 / 右峰 103），上下压条约 50~80
-  const fg = g.createLinearGradient(x0, 0, x1, 0);
-  fg.addColorStop(0.000, "rgb(78,76,72)");
-  fg.addColorStop(0.035, "rgb(98,96,92)");
-  fg.addColorStop(0.055, "rgb(104,102,97)");
-  fg.addColorStop(0.080, "rgb(56,54,52)");
-  fg.addColorStop(0.500, "rgb(47,45,43)");
-  fg.addColorStop(0.925, "rgb(53,51,49)");
-  fg.addColorStop(0.955, "rgb(84,82,78)");
-  fg.addColorStop(0.980, "rgb(68,66,63)");
-  fg.addColorStop(1.000, "rgb(34,32,30)");
-  g.save();
-  g.filter = "blur(1.1px)";                 // 框边羽化，避免“画框”般的硬直角
-  g.fillStyle = fg;
-  g.fillRect(x0, P.y0, x1 - x0, P.y1 - P.y0);
-  g.restore();
-  // 网孔区底色（暖灰）
-  const mg = g.createLinearGradient(0, P.y0, 0, P.y1);
-  mg.addColorStop(0, "#29251f");
-  mg.addColorStop(0.4, "#2d2822");
-  mg.addColorStop(1, "#262220");
-  g.fillStyle = mg;
-  g.fillRect(cx + P.meshX0, P.meshY0, P.meshX1 - P.meshX0, P.meshY1 - P.meshY0);
-  g.restore();
-}
-
-function pin(g, x, y) {
-  g.save();
-  g.beginPath(); g.arc(x, y, 14.5, 0, 7);
-  g.fillStyle = "rgba(74,58,16,0.95)"; g.fill();
-  g.beginPath(); g.arc(x, y, 11, 0, 7);
-  g.fillStyle = "rgba(38,29,8,0.95)"; g.fill();
-  g.beginPath(); g.arc(x, y, 15, 0, 7);
-  g.strokeStyle = "rgba(126,106,45,0.42)"; g.lineWidth = 1.6; g.stroke();
-  g.beginPath(); g.arc(x, y - 1.5, 7.5, 0, 7);
-  g.fillStyle = "rgba(30,23,6,0.9)"; g.fill();
-  g.restore();
-}
-
-/* 顶层：玻璃反光 / 边缘 / 颈部高光 */
-function drawOver(g, cx) {
-  const G = GLASS, hw = G.halfW;
-  g.save();
-  g.clip(glassPath(cx));
-
-  /* 左内壁反光：实测峰值在 cx-128、宽约 10px，向内 20px 内衰减到 0 */
-  g.save();
-  g.globalCompositeOperation = "lighter";
-  // 实测：玻璃最外沿是暗的（~6），亮线在 cx-127 处（~106），向内 9px 落到 ~46 并保持
-  const rim = g.createLinearGradient(cx - 133, 0, cx - 100, 0);
-  rim.addColorStop(0.00, "rgba(255,244,220,0)");
-  rim.addColorStop(0.13, "rgba(255,244,220,0.02)");
-  rim.addColorStop(0.17, "rgba(255,240,212,0.34)");
-  rim.addColorStop(0.21, "rgba(255,238,205,0.44)");   // 峰值 ≈ cx-126
-  rim.addColorStop(0.30, "rgba(245,232,200,0.26)");
-  rim.addColorStop(0.50, "rgba(220,210,186,0.10)");
-  rim.addColorStop(0.80, "rgba(200,192,176,0.03)");
-  rim.addColorStop(1.00, "rgba(190,184,172,0)");
-  g.fillStyle = rim;
-  g.fillRect(cx - 134, 452, 34, 460);
-  // 底部渐隐（实测 850 行仍亮，890 行转暗）
-  const fade = g.createLinearGradient(0, 452, 0, 912);
-  fade.addColorStop(0, "rgba(0,0,0,0.58)");
-  fade.addColorStop(0.22, "rgba(0,0,0,0.18)");
-  fade.addColorStop(0.45, "rgba(0,0,0,0.02)");
-  fade.addColorStop(0.78, "rgba(0,0,0,0.14)");
-  fade.addColorStop(1, "rgba(0,0,0,0.42)");
-  g.globalCompositeOperation = "source-atop";
-  g.fillStyle = fade;
-  g.fillRect(cx - 134, 452, 34, 460);
-  g.restore();
-
-  /* 右内壁：极弱的一条细边（实测 448 处 ~20） */
-  g.save();
-  g.globalCompositeOperation = "lighter";
-  const rg = g.createLinearGradient(cx + hw - 12, 0, cx + hw, 0);
-  rg.addColorStop(0, "rgba(150,150,155,0)");
-  rg.addColorStop(1, "rgba(150,150,158,0.10)");
-  g.fillStyle = rg;
-  g.fillRect(cx + hw - 12, 452, 12, 460);
-  g.restore();
-
-  /* 穹顶：左肩大面积冷灰漫反射（实测中心 ~(cx-70, 500)，峰值 ~(83,82,94)） */
-  g.save();
-  g.globalCompositeOperation = "lighter";
-  const blob = g.createRadialGradient(cx - 68, 498, 2, cx - 68, 498, 40);
-  blob.addColorStop(0, "rgba(152,158,186,0.46)");
-  blob.addColorStop(0.35, "rgba(122,128,150,0.22)");
-  blob.addColorStop(0.7, "rgba(94,98,114,0.05)");
-  blob.addColorStop(1, "rgba(84,88,102,0)");
-  g.fillStyle = blob;
-  g.beginPath(); g.arc(cx - 68, 498, 40, 0, 7); g.fill();
-
-  // 肩部上缘的细高光弧
-  g.filter = "blur(2.5px)";
-  g.beginPath();
-  g.moveTo(cx - 100, 526);
-  g.bezierCurveTo(cx - 108, 492, cx - 84, 470, cx - 46, 459);
-  g.strokeStyle = "rgba(255,255,255,0.16)";
-  g.lineWidth = 6; g.lineCap = "round"; g.stroke();
-  g.filter = "none";
-  g.beginPath();
-  g.moveTo(cx - 97, 523);
-  g.bezierCurveTo(cx - 104, 492, cx - 82, 472, cx - 48, 462);
-  g.strokeStyle = "rgba(255,255,255,0.22)";
-  g.lineWidth = 2.6; g.stroke();
-
-  /* 颈部与顶部小球：玻璃厚度带来的灰调（实测颈中 ~45、颈下 ~25、球 ~30） */
-  const nk = g.createLinearGradient(0, 396, 0, 480);
-  nk.addColorStop(0.00, "rgba(140,140,146,0.12)");
-  nk.addColorStop(0.22, "rgba(150,150,156,0.15)");
-  nk.addColorStop(0.45, "rgba(150,150,156,0.11)");
-  nk.addColorStop(0.72, "rgba(150,150,156,0.05)");
-  nk.addColorStop(1.00, "rgba(150,150,156,0)");
-  g.fillStyle = nk;
-  g.fillRect(cx - 60, 396, 120, 84);
-
-  /* 颈部锥面的左侧镜面高光（实测 y=435 x≈cx-20 亮度 113，y=445 x≈cx-23 亮度 131） */
-  g.beginPath();
-  g.moveTo(cx - 25, 456);
-  g.bezierCurveTo(cx - 23, 444, cx - 20, 434, cx - 13, 426);
-  g.strokeStyle = "rgba(255,244,222,0.20)";
-  g.lineWidth = 7; g.lineCap = "round";
-  g.filter = "blur(2px)"; g.stroke();
-  g.filter = "none";
-  g.beginPath();
-  g.moveTo(cx - 24, 454);
-  g.bezierCurveTo(cx - 22, 443, cx - 19, 434, cx - 14, 427);
-  g.strokeStyle = "rgba(255,250,236,0.42)";
-  g.lineWidth = 2.4; g.stroke();
-
-  /* 顶部小球：左侧边缘光 + 顶端弧光 */
-  g.beginPath();
-  g.moveTo(cx - 9.0, 416);
-  g.lineTo(cx - 8.0, 403);
-  g.strokeStyle = "rgba(240,238,234,0.22)";
-  g.lineWidth = 2.8; g.lineCap = "round"; g.stroke();
-  g.beginPath();
-  g.arc(cx, 408, 9.5, Math.PI * 1.15, Math.PI * 1.85);
-  g.strokeStyle = "rgba(255,252,244,0.18)";
-  g.lineWidth = 2.0; g.stroke();
-
-  /* 穹顶外缘的暖色反光（灯丝在玻璃内壁的反射） */
-  const wm = g.createRadialGradient(cx - 6, 560, 10, cx - 6, 560, 190);
-  wm.addColorStop(0, "rgba(255,116,18,0.055)");
-  wm.addColorStop(0.6, "rgba(255,100,10,0.02)");
-  wm.addColorStop(1, "rgba(255,90,0,0)");
-  g.fillStyle = wm;
-  g.fillRect(cx - 140, 470, 200, 330);
-  g.restore();
-
-  /* 玻璃厚度感：右侧压暗 */
-  const sh = g.createLinearGradient(cx - hw, 0, cx + hw, 0);
-  sh.addColorStop(0, "rgba(0,0,0,0)");
-  sh.addColorStop(0.45, "rgba(0,0,0,0.05)");
-  sh.addColorStop(1, "rgba(0,0,0,0.14)");
-  g.fillStyle = sh;
-  g.fillRect(cx - hw, 380, hw * 2, 620);
-
-  g.restore();
-}
-
-/* ------------------------------- 辉光渲染 -------------------------------- */
-/* 目标：与参考图一致——芯部 ≈ rgb(233,165,16)，半高宽 ≈ 16px，外扩橙色光晕 */
-const glowCv = document.createElement("canvas");
-const gg = glowCv.getContext("2d");
-function buildGlowCanvas() {
-  glowCv.width = Math.round(GLOW.hw * 2 * GS);
-  glowCv.height = Math.round(GLOW.h * GS);
-}
-
-function drawGlow(cx, d, inten) {
-  gg.setTransform(GS, 0, 0, GS, -(cx - GLOW.hw) * GS, -GLOW.y0 * GS);
-  gg.globalCompositeOperation = "source-over";
-  gg.globalAlpha = 1;
-  gg.clearRect(cx - GLOW.hw, GLOW.y0, GLOW.hw * 2, GLOW.h);
-
-  const p = digitPath(d, cx);
-  gg.lineCap = "round";
-  gg.lineJoin = "round";
-
-  // 灯丝 = 一条窄笔芯，外扩柔光由“同一笔芯的逐级模糊副本”加法叠加而成。
-  // 注意：必须用 lighter 累加；若用更宽的实色描边打底，会在亮芯外留下一圈暗环。
-  gg.globalCompositeOperation = "lighter";
-  gg.globalAlpha = Math.max(0, Math.min(1, inten));        // 起辉抖动 / 常驻微闪
-  const k = inten > 1 ? Math.min(1.9, inten) : 1;          // 落定瞬间的过亮
-  const col = (r, g, b) =>
-    `rgb(${Math.min(255, Math.round(r * k))},${Math.min(255, Math.round(g * k))},${Math.min(255, Math.round(b * k))})`;
-  // 每档的数值就是它在该半径处的“加法贡献”，逐档收窄 → 亮度自然递减
-  const passes = [
-    [2,  col(84, 55, 2)],           // 灯丝本体（也做轻微模糊，避免硬边）
-    [5,  col(54, 31, 0)],
-    [10, col(34, 18, 0)],
-    [20, col(25, 12, 0)],
-    [40, col(16, 7, 0)],
-    [76, col(17, 8, 0)],
-    [130, col(13, 6, 0)],           // 宽层：把管内填成暖色（参考图的“光晕罩”感）
-    [210, col(8, 4, 0)],            // 最宽一层，均匀托底
-  ];
-  gg.lineWidth = 12;
-  for (const [blur, c] of passes) {
-    gg.filter = blur ? `blur(${blur}px)` : "none";
-    gg.strokeStyle = c;
-    gg.stroke(p);
+  /* 暖光晕：exp(-2d)，d = 像素距离 / 1080 */
+  const hg = haloCv.getContext("2d");
+  hg.setTransform(1, 0, 0, 1, 0, 0);
+  hg.clearRect(0, 0, w, h);
+  const gr = hg.createRadialGradient(0.5 * w, B.centerY * h, 0, 0.5 * w, B.centerY * h, h * 1.6);
+  for (let i = 0; i <= 20; i++) {
+    const d = i / 20 * 1.6;
+    gr.addColorStop(i / 20, rgba(B.warm, clamp(Math.exp(-2 * d) * B.strength, 0, 1)));
   }
-  gg.filter = "none";
-  gg.globalAlpha = 1;
-}
-
-/* ------------------------------- 分隔灯 --------------------------------- */
-function drawSeparator(g, cx, pulse) {
-  const L1 = { top: 664, bot: 750, cy: 706 }, L2 = { top: 784, bot: 880, cy: 840 };
-  const hw = 28;
-
-  /* 底座 */
-  roundRect(g, cx - 24, 940, 48, 38, 7);
-  const bg = g.createLinearGradient(0, 940, 0, 978);
-  bg.addColorStop(0, "#0a0a0b"); bg.addColorStop(1, "#030304");
-  g.fillStyle = bg; g.fill();
-
-  /* 两根细灯杆 */
-  g.strokeStyle = "rgba(44,42,40,0.9)";
-  g.lineWidth = 2.0;
-  for (const dx of [-3.6, 3.6]) {
-    g.beginPath();
-    g.moveTo(cx + dx, L1.bot - 10); g.lineTo(cx + dx, L2.top + 12);
-    g.moveTo(cx + dx, L2.bot - 10); g.lineTo(cx + dx, 944);
-    g.stroke();
-  }
-
-  for (const L of [L1, L2]) {
-    const shell = new Path2D();
-    shell.moveTo(cx - hw, L.bot - 16);
-    shell.lineTo(cx - hw, L.top + 26);                       // 直壁
-    shell.bezierCurveTo(cx - hw, L.top + 16, cx - 17, L.top + 12, cx - 9, L.top + 4);  // 顶尖锥
-    shell.bezierCurveTo(cx - 5, L.top - 3, cx + 5, L.top - 3, cx + 9, L.top + 4);
-    shell.bezierCurveTo(cx + 17, L.top + 12, cx + hw, L.top + 16, cx + hw, L.top + 26);
-    shell.lineTo(cx + hw, L.bot - 16);
-    shell.bezierCurveTo(cx + hw, L.bot - 4, cx + 14, L.bot + 2, cx + 6, L.bot + 2);   // 底部收细
-    shell.bezierCurveTo(cx - 6, L.bot + 2, cx - hw, L.bot - 4, cx - hw, L.bot - 16);
-    shell.closePath();
-
-    g.save();
-    g.clip(shell);
-    const cg = g.createLinearGradient(0, L.top - 10, 0, L.bot);
-    cg.addColorStop(0, "#170a04");
-    cg.addColorStop(0.45, "#22100a");
-    cg.addColorStop(1, "#0c0503");
-    g.fillStyle = cg; g.fillRect(cx - hw, L.top - 14, hw * 2, L.bot - L.top + 22);
-
-    // 灯芯
-    g.globalCompositeOperation = "lighter";
-    g.filter = "blur(6px)";
-    const hg = g.createRadialGradient(cx, L.cy, 2, cx, L.cy, 27);
-    hg.addColorStop(0, `rgba(214,150,8,${0.42 * pulse})`);
-    hg.addColorStop(0.5, `rgba(170,105,5,${0.22 * pulse})`);
-    hg.addColorStop(1, "rgba(130,70,0,0)");
-    g.fillStyle = hg;
-    g.beginPath(); g.ellipse(cx, L.cy, 25, 31, 0, 0, 7); g.fill();
-    g.filter = "none";
-    g.beginPath(); g.ellipse(cx, L.cy, 9.5, 16.5, 0, 0, 7);
-    g.fillStyle = `rgba(196,124,4,${0.80 * pulse})`; g.fill();
-    g.beginPath(); g.ellipse(cx, L.cy, 7, 13, 0, 0, 7);
-    g.fillStyle = `rgba(226,158,6,${0.88 * pulse})`; g.fill();
-    g.beginPath(); g.ellipse(cx, L.cy - 1, 4, 8, 0, 0, 7);
-    g.fillStyle = `rgba(244,186,14,${0.80 * pulse})`; g.fill();
-    g.globalCompositeOperation = "source-over";
-
-    // 玻璃壳细反光
-    g.globalCompositeOperation = "lighter";
-    g.fillStyle = "rgba(255,246,228,0.085)";
-    g.fillRect(cx - hw + 2, L.top + 4, 3, L.bot - L.top - 12);
-    g.fillStyle = "rgba(255,246,228,0.055)";
-    g.fillRect(cx + hw - 6, L.top + 8, 2, L.bot - L.top - 18);
-    g.restore();
-  }
-}
-
-/* ------------------------------ 日期文本 -------------------------------- */
-const FONT = '"Oswald", "Helvetica Neue Condensed", "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Helvetica, Arial, sans-serif';
-let S_DATE = 0.66, S_DAY = 0.56;
-const FS = 66;
-function initFont() {
-  ctx.save();
-  ctx.font = `bold ${FS}px ${FONT}`;
-  S_DATE = 44.4 / ctx.measureText("10").width;       // 参考图 “10” 实测宽 40（含描边补偿）
-  S_DAY = 222 / ctx.measureText("SATURDAY").width;   // 参考图 “SATURDAY” 实测宽 222
-  ctx.restore();
-}
-/* "M/D" 中的斜杠比系统字体更宽更斜，按参考图单独画，其余字符按压缩系数绘制 */
-function drawDateRun(g, parts, x, baseY) {
-  const slashW = 27, slashGap = 6.5, capH = 52;
-  for (let i = 0; i < parts.length; i++) {
-    const w = g.measureText(parts[i]).width * S_DATE;
-    g.save();
-    g.translate(x, 0); g.scale(S_DATE, 1);
-    g.fillText(parts[i], 0, baseY); g.strokeText(parts[i], 0, baseY);
-    g.restore();
-    x += w;
-    if (i < parts.length - 1) {
-      g.save();
-      g.lineCap = "butt";
-      g.lineWidth = 9;
-      g.beginPath();
-      g.moveTo(x + slashGap, baseY);
-      g.lineTo(x + slashGap + 19, baseY - capH);
-      g.stroke();
-      g.restore();
-      x += slashW + 5;
+  hg.fillStyle = gr; hg.fillRect(0, 0, w, h);
+  /* 颗粒 */
+  if (!grainTile) {
+    const N = 64, gc = document.createElement("canvas");
+    gc.width = gc.height = N;
+    const gg = gc.getContext("2d");
+    const id = gg.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) {
+      const v = 128 + (Math.random() - 0.5) * 26;
+      id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v;
+      id.data[i * 4 + 3] = 255;
     }
+    gg.putImageData(id, 0, 0);
+    grainTile = gc;
   }
-  return x;
-}
-function drawDate(g, dateStr, dayStr) {
-  const baseY = 300, gap = 54, slashW = 32;
-  g.save();
-  g.font = `bold ${FS}px ${FONT}`;
-  g.fillStyle = "rgb(78,76,70)";
-  g.strokeStyle = "rgb(78,76,70)";
-  g.lineWidth = 1.2; g.lineJoin = "round";
-  g.textBaseline = "alphabetic";
-  const parts = dateStr.split("/");
-  let w1 = 0;
-  for (const p of parts) w1 += g.measureText(p).width * S_DATE;
-  w1 += (parts.length - 1) * (slashW + 5.5);
-  const w2 = g.measureText(dayStr).width * S_DAY;
-  let x = 1251 - (w1 + gap + w2) / 2;
-  x = drawDateRun(g, parts, x, baseY);
-  x += gap;
-  g.save();
-  g.translate(x, 0); g.scale(S_DAY, 1);
-  g.fillText(dayStr, 0, baseY); g.strokeText(dayStr, 0, baseY);
-  g.restore();
-  g.restore();
 }
 
-/* ------------------------------- 时钟状态 ------------------------------- */
+/* ------------------------------ 时间与动画 ------------------------------ */
 const DAYS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-const tubes = TUBE_CX.map((_, i) => ({
-  cur: "0", to: "0", t: 9, dur: 0.26, seed: Math.random() * 97 + i * 13,
-  walk: 0,                                  // 平滑随机游走（缓慢忽明忽暗）
-  drop: 0,                                  // 正在闪断的剩余时间
-  nextDrop: 0.6 + Math.random() * 3.2,      // 下次闪断倒计时
+let DATE_STR = "10 / 10";
+let dayStr = "SATURDAY";
+const tubes = TUBE_X.map((_, i) => ({
+  cur: "0", to: "0", t: 9, dur: 0.26,
+  seed: Math.random() * 97 + i * 13,
+  walk: 0, drop: 0, nextDrop: 0.6 + Math.random() * 3.2,
 }));
+
 function digitsOf(str) {
   for (let i = 0; i < 6; i++) {
     const d = str[i], st = tubes[i];
@@ -693,47 +571,57 @@ function digitsOf(str) {
     }
   }
 }
-let dateStr = "10/10", dayStr = "SATURDAY";
 function nowStrings() {
   const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
   return {
     time: `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`,
-    date: `${d.getMonth() + 1}/${d.getDate()}`,
+    date: `${p2(d.getMonth() + 1)} / ${p2(d.getDate())}`,
     day: DAYS[d.getDay()],
   };
 }
-function applyFixed() {
-  if (FIXED_T) {
-    const parts = FIXED_T.split(":").map((v) => String(parseInt(v, 10) || 0).padStart(2, "0"));
-    while (parts.length < 3) parts.push("00");
-    digitsOf(parts.join(""));
+function tubeFrame(st, T) {
+  if (st.t < st.dur) {
+    const k = st.t / st.dur;
+    if (k < 0.62) {                       /* 起辉：随机跳字 */
+      const step = Math.floor(st.t / 0.032);
+      const r = Math.abs(Math.sin((step + 1) * 12.9898 + st.seed) * 43758.5453) % 1;
+      const d = r < 0.45 ? String(Math.floor(r * 10)) : (r < 0.7 ? st.cur : st.to);
+      return { digit: d, alpha: 0.34 + 0.5 * Math.abs(Math.sin(step * 2.7 + st.seed)) };
+    }
+    const k2 = (k - 0.62) / 0.38;         /* 落定：过亮后回落 */
+    return { digit: st.to, alpha: 1 + 0.45 * Math.pow(1 - k2, 2) };
   }
-  if (FIXED_D) dateStr = FIXED_D;
-  if (FIXED_W) dayStr = FIXED_W.toUpperCase();
+  if (STATIC) return { digit: st.to, alpha: 1 };
+  let a = 1 + st.walk * 0.075;            /* 常驻忽明忽暗 */
+  a *= 0.985 + 0.015 * Math.sin(T * 31 + st.seed) * Math.sin(T * 7.3 + st.seed);
+  if (st.drop > 0) a *= 0.42 + 0.38 * Math.random();
+  return { digit: st.to, alpha: a };
+}
+/* glow.glsl 的闪烁项 */
+function flickerOf(T, seed, amt, speed) {
+  const t = T * (speed || 1.6) + seed * 13.7;
+  return 1 + amt * 0.55 * Math.sin(t) + amt * 0.30 * Math.sin(t * 2.7 + 1.3) + amt * 0.18 * Math.sin(t * 6.1 + 0.7);
 }
 
 /* -------------------------------- 主循环 -------------------------------- */
-let last = performance.now(), clockAcc = 1;
+let last = performance.now(), acc = 1;
 function tick(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   const T = now / 1000;
 
   if (!STATIC) {
-    clockAcc += dt;
-    if (clockAcc >= 0.25) {
-      clockAcc = 0;
+    acc += dt;
+    if (acc >= 0.25) {
+      acc = 0;
       const s = nowStrings();
       digitsOf(s.time);
-      if (!FIXED_D) dateStr = s.date;
+      if (!FIXED_D) DATE_STR = s.date;
       if (!FIXED_W) dayStr = s.day;
     }
     for (const st of tubes) {
       st.t += dt;
-      // 缓慢的明暗漂移：随机游走 + 回归
-      st.walk += (Math.random() - 0.5) * 0.55;
-      st.walk *= 0.90;
-      // 偶发闪断（灯管“饿一下”的观感）
+      st.walk += (Math.random() - 0.5) * 0.55; st.walk *= 0.90;
       st.nextDrop -= dt;
       if (st.drop <= 0 && st.nextDrop <= 0) {
         st.drop = 0.035 + Math.random() * 0.09;
@@ -746,109 +634,232 @@ function tick(now) {
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#000";
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = DESIGN.bg;
   ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.setTransform(vs, 0, 0, vs, vox, voy);
+  ctx.setTransform(S, 0, 0, S, ox, oy);
 
-  const pulse = STATIC ? 1 : 0.93 + 0.07 * Math.sin(T * 2.1) + 0.02 * Math.sin(T * 17);
-  for (const cx of SEP_CX) drawSeparator(ctx, cx, Math.max(0.78, pulse));
+  /* 1) 环境底 + 暖光晕（闪烁只作用在光晕上） */
+  ctx.drawImage(ambCv, 0, 0, DESIGN.W, DESIGN.H);
+  const ambFlick = STATIC ? 1 : (0.90 + 0.062 * Math.sin(T * 1.27) + 0.032 * Math.sin(T * 3.13 + 1.7) + 0.018 * Math.sin(T * 7.31 + 0.4));
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = clamp(ambFlick, 0, 1.4);
+  ctx.drawImage(haloCv, 0, 0, DESIGN.W, DESIGN.H);
+  ctx.restore();
 
+  /* 2) 低分辨率柔光层：地面光池 + 管光晕 + 分隔灯 */
+  const gw = glowCv.width, gh = glowCv.height, gs = DESIGN.W / gw;
+  glowG.setTransform(1, 0, 0, 1, 0, 0);
+  glowG.globalCompositeOperation = "source-over";
+  glowG.globalAlpha = 1;
+  glowG.clearRect(0, 0, gw, gh);
+  glowG.globalCompositeOperation = "lighter";
+  glowG.save();
+  glowG.scale(1 / gs, 1 / gs);
+
+  const pool = DESIGN.pool;
+  glowFill(glowG, pool.x + pool.w / 2, pool.y + pool.h / 2, pool.w / 2, pool.h / 2, pool.color, pool.falloff,
+    pool.intensity * (STATIC ? 1 : flickerOf(T, pool.seed, pool.flicker)));
+
+  const TH = DESIGN.tube.halo;
   for (let i = 0; i < 6; i++) {
-    const cx = TUBE_CX[i], st = tubes[i];
-    let d = st.to, inten = 1;
-
-    if (st.t < st.dur) {
-      const k = st.t / st.dur;
-      if (k < 0.62) {                        // 起辉抖动：随机跳字
-        const step = Math.floor(st.t / 0.032);
-        const r = Math.abs(Math.sin((step + 1) * 12.9898 + st.seed) * 43758.5453) % 1;
-        d = r < 0.45 ? String(Math.floor(r * 10)) : (r < 0.7 ? st.cur : st.to);
-        inten = 0.32 + 0.5 * Math.abs(Math.sin(step * 2.7 + st.seed));
-      } else {                               // 落定：先过亮再回落
-        const k2 = (k - 0.62) / 0.38;
-        d = st.to;
-        inten = 1 + 0.5 * Math.pow(1 - k2, 2);
-      }
-    } else if (!STATIC) {
-      // 常驻：缓慢忽明忽暗 + 极快微颤
-      inten = 1 + st.walk * 0.075;
-      inten *= 0.985 + 0.015 * Math.sin(T * 31 + st.seed) * Math.sin(T * 7.3 + st.seed);
-      if (st.drop > 0) inten *= 0.42 + 0.38 * Math.random();   // 闪断瞬间忽明忽暗
+    glowFill(glowG, TUBE_X[i] + DESIGN.tube.w / 2, DESIGN.clock.y + DESIGN.tube.h / 2,
+      DESIGN.tube.w / 2, DESIGN.tube.h / 2, TH.color, TH.falloff,
+      TH.intensity * (STATIC ? 1 : flickerOf(T, TH.seed + i * 0.7, TH.flicker)));
+  }
+  const CH = DESIGN.colon.halo;
+  for (let i = 0; i < 2; i++) {
+    glowFill(glowG, COLON_X[i] + CH.x + CH.w / 2, DESIGN.clock.y + CH.y + CH.h / 2, CH.w / 2, CH.h / 2,
+      CH.color, CH.falloff, CH.intensity * (STATIC ? 1 : flickerOf(T, CH.seed + i, CH.flicker)));
+  }
+  for (let i = 0; i < 2; i++) {
+    for (const b of DESIGN.colon.bulbs) {
+      const G = DESIGN.colon.glow;
+      const f = STATIC ? 1 : flickerOf(T, 1.7 + i * 3.1, CH.flicker, 2.1);
+      glowFill(glowG, COLON_X[i] + b.x + G.dx + G.w / 2, DESIGN.clock.y + b.y + G.dy + G.h / 2,
+        G.w * 0.8, G.h * 0.8, G.color, 2.2, 0.75 * f, 12);
     }
+  }
+  glowG.restore();
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";          // Halo / Light Pool 在设计中均为 screen
+  ctx.drawImage(glowCv, 0, 0, gw, gh, 0, 0, DESIGN.W, DESIGN.H);
+  ctx.restore();
 
-    drawGlow(cx, d, inten);
-
-    const L = tubeLayers[i];
-    ctx.drawImage(L.under, cx - LAYER.hw, LAYER.y0, LAYER.hw * 2, LAYER.h);
-
-    // 阳极网：先把孔洞压暗（孔暗、网亮），再叠加辉光。
-    // 辉光是灯丝自身发出的光（在阳极网前方），不参与压暗，因此亮处自然平滑
+  /* 3) 逐管：静态层 → 数字 → 玻璃反光 */
+  const TD = DESIGN.tube;
+  for (let i = 0; i < 6; i++) {
+    const { digit, alpha } = tubeFrame(tubes[i], T);
+    ctx.drawImage(tubeStatic[i], TUBE_X[i], DESIGN.clock.y, TD.w, TD.h);
+    const dCv = renderDigit(i, digit);
     ctx.save();
-    const P = GLASS.plate;
-    const mx0 = cx + P.meshX0, my0 = P.meshY0;
-    const mw = P.meshX1 - P.meshX0, mh = P.meshY1 - P.meshY0;
-    ctx.beginPath();
-    ctx.rect(mx0, my0, mw, mh);
-    ctx.clip();
-    ctx.fillStyle = holePat;
-    ctx.fillRect(mx0, my0, mw, mh);
+    ctx.globalCompositeOperation = "source-over";   // 设计稿：数字为普通混合
+    ctx.globalAlpha = clamp(alpha, 0, 1);
+    ctx.drawImage(dCv, TUBE_X[i] + TD.digit.x, DESIGN.clock.y + TD.digit.y, TD.digit.w, TD.digit.h);
     ctx.restore();
-
     ctx.save();
-    ctx.clip(glassPath(cx));
-    ctx.globalCompositeOperation = "lighter";
-    ctx.drawImage(glowCv, cx - GLOW.hw, GLOW.y0, GLOW.hw * 2, GLOW.h);
+    ctx.globalCompositeOperation = "screen";        // 设计稿：Glass Shell blendMode = screen
+    ctx.drawImage(shellLayer(i), TUBE_X[i], DESIGN.clock.y, TD.w, TD.h);
     ctx.restore();
-
-    ctx.drawImage(L.over, cx - LAYER.hw, LAYER.y0, LAYER.hw * 2, LAYER.h);
   }
 
-  drawDate(ctx, dateStr, dayStr);
-
-  // ── 柔光合成：整幅画面降采样 1/4 并模糊，再加法叠回 ──
-  if (BLOOM > 0) {
-    const bw = bloomCv.width, bh = bloomCv.height;
-    bloomG.setTransform(1, 0, 0, 1, 0, 0);
-    bloomG.globalCompositeOperation = "source-over";
-    bloomG.globalAlpha = 1;
-    bloomG.clearRect(0, 0, bw, bh);
-    bloomG.filter = "none";
-    bloomG.drawImage(cv, 0, 0, bw, bh);
-    // 自乘一次：暗部被压到接近 0，只留灯丝/高光参与柔光，背景仍是纯黑
-    bloomG.globalCompositeOperation = "multiply";
-    bloomG.drawImage(bloomCv, 0, 0, bw, bh);
-    bloomG.globalCompositeOperation = "source-over";
-    bloomG.filter = "blur(1.8px)";
-    bloomG.drawImage(bloomCv, 0, 0, bw, bh);
-    bloomG.filter = "none";
-    // 再叠一层更宽、更弱的柔光（不做平方）：给玻璃高光加“光泽”，纯黑处仍是 0
-    bloomG.globalAlpha = 0.10;
-    bloomG.filter = "blur(7px)";
-    bloomG.drawImage(cv, 0, 0, bw, bh);
-    bloomG.filter = "none";
-    bloomG.globalAlpha = 1;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = BLOOM;
-    ctx.drawImage(bloomCv, 0, 0, cv.width, cv.height);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
+  /* 4) 分隔灯 */
+  for (let i = 0; i < 2; i++) {
+    ctx.drawImage(colonStatic[i], COLON_X[i], DESIGN.clock.y, DESIGN.colon.w, DESIGN.colon.h);
+    const f = STATIC ? 1 : flickerOf(T, 1.7 + i * 3.1, DESIGN.colon.halo.flicker, 2.1);
+    for (const b of DESIGN.colon.bulbs) {
+      const G = DESIGN.colon.glow;
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      glowFill(ctx, COLON_X[i] + b.x + G.dx + G.w / 2, DESIGN.clock.y + b.y + G.dy + G.h / 2,
+        G.w * 0.8, G.h * 0.8, [255, 150, 60], 2.2, 0.55 * f, 12);
+      ctx.restore();
+    }
   }
+
+  /* 5) 日期 */
+  drawDate(ctx);
+
+  /* 6) 颗粒 */
+  if (!STATIC && grainTile) {
+    ctx.save();
+    ctx.globalAlpha = 0.016;
+    const wob = Math.floor(T * 22) % 64;
+    ctx.fillStyle = ctx.createPattern(grainTile, "repeat");
+    ctx.translate(-wob, -wob);
+    ctx.fillRect(0, 0, DESIGN.W + 64, DESIGN.H + 64);
+    ctx.restore();
+  }
+
   requestAnimationFrame(tick);
 }
 
-/* --------------------------------- 启动 --------------------------------- */
-window.addEventListener("resize", resize);
-resize();
-initFont();
-applyFixed();
-if (!FIXED_T) {
-  const s = nowStrings();
-  digitsOf(s.time);
-  if (!FIXED_D) dateStr = s.date;
-  if (!FIXED_W) dayStr = s.day;
+function drawDate(g) {
+  const D = DESIGN.date;
+  const hasLS = "letterSpacing" in g;
+  g.save();
+  g.textBaseline = "middle";
+  g.textAlign = "left";
+  const wOf = (txt, font, ls) => {
+    g.font = font;
+    if (hasLS) g.letterSpacing = `${D.spacing}px`;
+    return g.measureText(txt).width + (hasLS ? 0 : Math.max(0, txt.length - 1) * ls);
+  };
+  const fDay = `400 ${D.fontSize}px "Inter", system-ui, sans-serif`;
+  const fWeek = `500 ${D.fontSize}px "Inter", system-ui, sans-serif`;
+  const wDay = wOf(DATE_STR, fDay, D.spacing);
+  const wWeek = wOf(dayStr, fWeek, D.spacing);
+  const total = wDay + D.gap + D.dotSize + D.gap + wWeek;
+  let x = (DESIGN.W - total) / 2;
+  const cy = D.y + 15;
+  g.fillStyle = D.fill;
+  g.font = fDay;
+  if (hasLS) g.letterSpacing = `${D.spacing}px`;
+  g.fillText(DATE_STR, x, cy);
+  x += wDay + D.gap;
+  g.beginPath(); g.arc(x + D.dotSize / 2, cy, D.dotSize / 2, 0, 7);
+  g.fillStyle = D.dotFill; g.fill();
+  x += D.dotSize + D.gap;
+  g.font = fWeek;
+  if (hasLS) g.letterSpacing = `${D.spacing}px`;
+  g.fillStyle = D.fill;
+  g.fillText(dayStr, x, cy);
+  if (hasLS) g.letterSpacing = "0px";
+  g.restore();
 }
+
+/* -------------------------------- 尺寸 --------------------------------- */
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  cv.width = Math.round(vw * dpr);
+  cv.height = Math.round(vh * dpr);
+  cv.style.width = vw + "px";
+  cv.style.height = vh + "px";
+  if (ICON_MODE) {
+    /* 图标模式：单只管子特写；icon=2 为 maskable（更小的主体，留安全边距） */
+    S = Math.min(cv.width, cv.height) / (Q.get("icon") === "2" ? 360 : 300);
+    const ci = 4;
+    ox = cv.width / 2 - (TUBE_X[ci] + DESIGN.tube.w / 2) * S;
+    oy = cv.height / 2 - (DESIGN.clock.y + 205) * S;
+  } else {
+    S = Math.min(cv.width / DESIGN.W, cv.height / DESIGN.H);
+    ox = (cv.width - DESIGN.W * S) / 2;
+    oy = (cv.height - DESIGN.H * S) / 2;
+  }
+  glowCv.width = Math.max(1, Math.round(DESIGN.W / 3));
+  glowCv.height = Math.max(1, Math.round(DESIGN.H / 3));
+  const ss = clamp(S * dpr, 1, 2);
+  const m = DESIGN.tube.mesh;
+  const src = buildMesh(m.w, m.h, m, ss);
+  meshCv.width = src.width; meshCv.height = src.height;
+  const mg = meshCv.getContext("2d");
+  mg.clearRect(0, 0, meshCv.width, meshCv.height);
+  mg.drawImage(src, 0, 0);
+  for (let i = 0; i < 6; i++) { digitCache[i] = null; buildTubeStatic(i); }
+  for (let i = 0; i < 2; i++) buildColonStatic(i);
+  buildAmbient();
+}
+
+/* -------------------------------- 启动 --------------------------------- */
+window.addEventListener("resize", resize);
+applyFixed();
+resize();
+if (FIXED_T) DATE_STR = `${FIXED_T.split(":")[0].padStart(2, "0")} / ${FIXED_T.split(":")[1].padStart(2, "0")}`;
+else {
+  const s0 = nowStrings();
+  digitsOf(s0.time);
+  DATE_STR = s0.date; dayStr = s0.day;
+}
+function applyFixed() {
+  if (FIXED_T) {
+    const parts = FIXED_T.split(":").map((v) => String(parseInt(v, 10) || 0).padStart(2, "0"));
+    while (parts.length < 3) parts.push("00");
+    digitsOf(parts.join(""));
+  }
+  if (FIXED_D) DATE_STR = FIXED_D;
+  if (FIXED_W) dayStr = FIXED_W.toUpperCase();
+}
+document.fonts.ready.then(() => { for (let i = 0; i < 6; i++) digitCache[i] = null; });
 requestAnimationFrame(tick);
+
+/* ------------------------------- PWA ----------------------------------- */
+const installBtn = document.getElementById("install");
+const hint = document.getElementById("hint");
+let deferredPrompt = null;
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+if (ICON_MODE) {
+  installBtn.style.display = "none";
+} else if (!isStandalone()) {
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBtn.classList.add("show");
+  });
+  setTimeout(() => { if (!isStandalone()) installBtn.classList.add("show"); }, 2200);
+  installBtn.addEventListener("click", async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const res = await deferredPrompt.userChoice;
+      if (res && res.outcome === "accepted") installBtn.classList.remove("show");
+      deferredPrompt = null;
+      return;
+    }
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    hint.textContent = ios
+      ? "在 Safari 中点击「分享」→「添加到主屏幕」，即可把时钟装到桌面。"
+      : "在浏览器菜单中选择「安装应用 / 添加到主屏幕」，即可把时钟装到桌面。";
+    hint.classList.add("show");
+    setTimeout(() => hint.classList.remove("show"), 6500);
+  });
+  window.addEventListener("appinstalled", () => installBtn.classList.remove("show"));
+}
+if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 </script>
 </body>
 </html>
