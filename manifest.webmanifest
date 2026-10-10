@@ -3,7 +3,7 @@
   "short_name": "辉光时钟",
   "description": "一台跑在浏览器里的辉光管时钟 —— 蜂窝阳极网、玻璃罩反光与金属底座，全部由代码实时绘制。",
   "lang": "zh-CN",
-  "start_url": "./",
+  "start_url": "./clock.html",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen"],

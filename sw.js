@@ -1,9 +1,8 @@
 /* 辉光管时钟 · Service Worker
    离线优先：应用外壳（HTML/字体/图标）走 cache-first，其余走网络。 */
-const VERSION = "nixie-v1";
+const VERSION = "nixie-v2";
 const SHELL = [
-  "./",
-  "./index.html",
+  "./clock.html",
   "./manifest.webmanifest",
   "./fonts/barlow-condensed-100.woff2",
   "./fonts/inter-400.woff2",
@@ -39,7 +38,7 @@ self.addEventListener("fetch", (e) => {
         const copy = res.clone();
         caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => {});
         return res;
-      }).catch(() => caches.match("./index.html"));
+      }).catch(() => caches.match("./clock.html"));
     })
   );
 });
