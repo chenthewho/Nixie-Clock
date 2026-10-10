@@ -182,13 +182,12 @@ function create(canvas, options) {
   const glowG = glowCv.getContext("2d");
   const ambCv = document.createElement("canvas");
   const ambG = ambCv.getContext("2d");
-  const haloCv = document.createElement("canvas");
   const rimCv = document.createElement("canvas");
   const softCv = document.createElement("canvas");
   const shellCv = document.createElement("canvas");
   const shellMask = new Path2D();
   shellMask.addPath(GLASS_PATH, new DOMMatrix().translate(DESIGN.tube.shell.x, DESIGN.tube.shell.y));
-  let grainTile = null;
+  let ditherPat = null;
 
   /* 时钟横向布局：3 组「两只管」+ 2 个分隔灯，整体居中 */
   const GAP = DESIGN.clock.gap;
@@ -439,8 +438,8 @@ function create(canvas, options) {
   /* 环境层：ambient.glsl 拆成「底色+暗角」（静态）与「暖光晕」（按闪烁叠加） */
   function buildAmbient() {
     const w = 480, h = 270, B = DESIGN.ambient;
-    ambCv.width = haloCv.width = w;
-    ambCv.height = haloCv.height = h;
+    ambCv.width = w;
+    ambCv.height = h;
     const g = ambG;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = "source-over";
@@ -463,30 +462,34 @@ function create(canvas, options) {
     vg.addColorStop(1, "rgba(0,0,0,0.30)");
     g.fillStyle = vg; g.fillRect(-1.45, -1.45, 2.9, 2.9);
     g.restore();
-    /* 暖光晕：exp(-2d)，d = 像素距离 / 1080 */
-    const hg = haloCv.getContext("2d");
-    hg.setTransform(1, 0, 0, 1, 0, 0);
-    hg.clearRect(0, 0, w, h);
-    const gr = hg.createRadialGradient(0.5 * w, B.centerY * h, 0, 0.5 * w, B.centerY * h, h * 1.6);
+    /* 暖光晕：exp(-2d)，d = 像素距离 / 1080。设计稿里 ambient 没有 u_flicker，
+       所以这一层是静态的，直接 screen 合进环境层，省掉每帧一次整屏叠加。 */
+    g.save();
+    g.globalCompositeOperation = "screen";
+    const gr = g.createRadialGradient(0.5 * w, B.centerY * h, 0, 0.5 * w, B.centerY * h, h * 1.6);
     for (let i = 0; i <= 20; i++) {
       const d = i / 20 * 1.6;
       gr.addColorStop(i / 20, rgba(B.warm, clamp(Math.exp(-2 * d) * B.strength, 0, 1)));
     }
-    hg.fillStyle = gr; hg.fillRect(0, 0, w, h);
-    /* 颗粒 */
-    if (!grainTile) {
-      const N = 64, gc = document.createElement("canvas");
-      gc.width = gc.height = N;
-      const gg = gc.getContext("2d");
-      const id = gg.createImageData(N, N);
-      for (let i = 0; i < N * N; i++) {
-        const v = 128 + (Math.random() - 0.5) * 26;
-        id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v;
-        id.data[i * 4 + 3] = 255;
-      }
-      gg.putImageData(id, 0, 0);
-      grainTile = gc;
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    g.restore();
+  }
+
+  /* 静态抖动：背景是 0.022 这种极浅的渐变（整屏只有 7 个灰阶、横带高 240px），
+     8bit 量化会留下很硬的横带。用中灰噪声 + overlay 打散 —— 噪声必须静止，
+     一动就会变成「带边一直在爬」。幅度对齐设计稿 ambient 的 grain ±0.0055。 */
+  function buildDither() {
+    const N = 64, gc = document.createElement("canvas");
+    gc.width = gc.height = N;
+    const gg = gc.getContext("2d");
+    const id = gg.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) {
+      const v = 128 + (Math.random() - 0.5) * 28;
+      id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v;
+      id.data[i * 4 + 3] = 255;
     }
+    gg.putImageData(id, 0, 0);
+    ditherPat = ctx.createPattern(gc, "repeat");
   }
 
   /* ------------------------------ 时间与动画 ------------------------------ */
@@ -596,14 +599,8 @@ function create(canvas, options) {
     ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(S, 0, 0, S, ox, oy);
 
-    /* 1) 环境底 + 暖光晕（闪烁只作用在光晕上） */
+    /* 1) 环境底 + 暖光晕（静态层，设计稿的 ambient 没有闪烁参数） */
     ctx.drawImage(ambCv, 0, 0, DESIGN.W, DESIGN.H);
-    const ambFlick = STATIC ? 1 : (0.94 + 0.045 * Math.sin(T * 0.42) + 0.022 * Math.sin(T * 1.05 + 1.7) + 0.008 * Math.sin(T * 2.3 + 0.4));
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = clamp(ambFlick, 0, 1.4);
-    ctx.drawImage(haloCv, 0, 0, DESIGN.W, DESIGN.H);
-    ctx.restore();
 
     /* 2) 低分辨率柔光层：地面光池 + 管光晕 + 分隔灯 */
     const gw = glowCv.width, gh = glowCv.height, gs = DESIGN.W / gw;
@@ -644,6 +641,16 @@ function create(canvas, options) {
     ctx.drawImage(glowCv, 0, 0, gw, gh, 0, 0, DESIGN.W, DESIGN.H);
     ctx.restore();
 
+    /* 2.5) 静态抖动打散背景横带（设备像素 1:1 绘制，与设计缩放无关） */
+    if (ditherPat) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = "overlay";
+      ctx.fillStyle = ditherPat;
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.restore();
+    }
+
     /* 3) 逐管：静态层 → 数字 → 玻璃反光 */
     const TD = DESIGN.tube;
     for (let i = 0; i < 6; i++) {
@@ -677,17 +684,6 @@ function create(canvas, options) {
 
     /* 5) 日期 */
     drawDate(ctx);
-
-    /* 6) 颗粒 */
-    if (!STATIC && grainTile) {
-      ctx.save();
-      ctx.globalAlpha = 0.016;
-      const wob = Math.floor(T * 22) % 64;
-      ctx.fillStyle = ctx.createPattern(grainTile, "repeat");
-      ctx.translate(-wob, -wob);
-      ctx.fillRect(0, 0, DESIGN.W + 64, DESIGN.H + 64);
-      ctx.restore();
-    }
 
     raf = requestAnimationFrame(tick);
   }
@@ -756,6 +752,7 @@ function create(canvas, options) {
     for (let i = 0; i < 6; i++) { digitCache[i] = null; buildTubeStatic(i); }
     for (let i = 0; i < 2; i++) buildColonStatic(i);
     buildAmbient();
+    buildDither();
   }
 
   /* -------------------------------- 启动 --------------------------------- */
