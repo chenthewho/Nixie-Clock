@@ -42,8 +42,10 @@ python3 -m http.server 8080     # 然后打开 http://localhost:8080/
 
 - **走时**：每秒同步系统时间，六只管子分别显示 时 分 秒。
 - **起辉跳动**：数字变化时先随机跳字抖动约 60% 时长，再「过亮」落定。
-- **忽明忽暗**：每只管子独立随机游走 ±7.5%、极快微颤，外加 0.7~3.6 秒一次的随机闪断；
-  光晕、光池、环境暖光按设计稿的 `u_flicker` 各自闪烁。
+- **忽明忽暗**：每只管子**独立**呼吸，节奏很慢、幅度很浅 —— 亮度用时间常数 2.6 秒的
+  随机游走漂移（±2%），叠一层 0.19Hz × 0.07Hz 的极慢微颤（±0.5%），另外平均十几秒才
+  偶发一次 40~90ms、只压暗 8%~16% 的浅闪断（带正弦包络，不会硬闪）。
+  光晕 / 光池 / 环境暖光按设计稿的 `u_flicker` 各自闪烁，频率与幅度各压了一档。
 - **PWA 安装**：`manifest.webmanifest` + `sw.js` 离线缓存；页面底部「下载到桌面」按钮
   走 `beforeinstallprompt`，iOS 下会提示「分享 → 添加到主屏幕」。
 - **自适应**：任意窗口尺寸等比缩放居中，画布按设备像素比渲染。
@@ -58,12 +60,14 @@ python3 -m http.server 8080     # 然后打开 http://localhost:8080/
 | `static` | 关闭所有动画，便于与设计稿逐像素比对 | `?static=1` |
 | `icon` | 图标导出模式（`1` 常规 / `2` maskable） | `?icon=1` |
 
-例：`index.html?static=1&t=21:48:05&d=10/10&w=SATURDAY` 即为设计稿定格状态。
+例：`clock.html?static=1&t=21:48:05&d=10/10&w=SATURDAY` 即为设计稿定格状态。
 
 ## 文件
 
 ```
-index.html                 页面与全部绘制逻辑（设计空间 1920×1080）
+clock.html                 页面骨架（画布 / 安装按钮，设计空间 1920×1080）
+clock.js                   NixieClock.create() —— 全部绘制与动画逻辑
+pwa.js                     NixiePWA —— 安装按钮 / Service Worker 注册
 manifest.webmanifest       PWA 清单
 sw.js                      Service Worker（应用外壳 cache-first）
 fonts/                     Barlow Condensed Thin + Inter（本地字体，可离线）
@@ -72,9 +76,12 @@ icons/                     192 / 512 / maskable / apple-touch
 
 ## 可调参数
 
-`index.html` 顶部的 `DESIGN` 对象集中了全部设计常量（与设计稿一一对应）：
-`ambient` / `date` / `clock` / `pool` / `tube`（halo、body、frame、mesh、digit、rim、shell、base）/
-`colon`。玻璃轮廓与氖泡用的是设计文件里的原始路径 `GLASS_D`、`BULB_D`。
+- **画面**：`clock.js` 顶部的 `DESIGN` 对象集中了全部设计常量（与设计稿一一对应）：
+  `ambient` / `date` / `clock` / `pool` / `tube`（halo、body、frame、mesh、digit、rim、shell、base）/
+  `colon`。玻璃轮廓与氖泡用的是设计文件里的原始路径 `GLASS_D`、`BULB_D`。
+- **忽明忽暗**：`clock.js` 主循环里的 `WALK_TAU`（游走时间常数，越大越慢）、`WALK_AMP`
+  （游走幅度）、微颤行、以及闪断的 `dropDur / dropDepth / nextDrop` 三处；
+  光晕闪烁另有 `GLOW_SPEED` / `GLOW_AMP` 两个全局倍率（`tubeFrame` 上方）。
 
 ## 与设计稿的差异
 

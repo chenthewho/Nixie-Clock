@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>辉光管时钟 · Nixie Clock</title>
+<meta name="description" content="一台跑在浏览器里的辉光管时钟 —— 蜂窝阳极网、玻璃罩反光与金属底座，全部由代码实时绘制。" />
+<meta name="theme-color" content="#0A0705" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="辉光时钟" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="icon" href="icons/icon-192.png" />
+<style>
+  @font-face {
+    font-family: "Barlow Condensed"; font-weight: 100; font-style: normal; font-display: block;
+    src: url("fonts/barlow-condensed-100.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter"; font-weight: 400; font-style: normal; font-display: swap;
+    src: url("fonts/inter-400.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter"; font-weight: 500; font-style: normal; font-display: swap;
+    src: url("fonts/inter-500.woff2") format("woff2");
+  }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: #0A0705; overflow: hidden;
+    overscroll-behavior: none; -webkit-font-smoothing: antialiased;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #install {
+    position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 12px 24px; border: 0; border-radius: 8px; cursor: pointer;
+    background: #FF9E2C; color: #1A1206;
+    font: 500 16px/1 "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+    letter-spacing: .06em; white-space: nowrap;
+    box-shadow: 0 4px 0 #7A4A08, 0 10px 30px rgba(255, 138, 43, .18);
+    opacity: 0; pointer-events: none;
+    transition: opacity .45s ease, transform .18s ease, box-shadow .18s ease;
+    z-index: 2;
+  }
+  #install.show { opacity: .93; pointer-events: auto; }
+  #install:hover { transform: translateX(-50%) translateY(-1px); box-shadow: 0 5px 0 #7A4A08, 0 14px 34px rgba(255,138,43,.26); }
+  #install:active { transform: translateX(-50%) translateY(2px); box-shadow: 0 2px 0 #7A4A08; }
+  #install svg { width: 17px; height: 17px; }
+  #hint {
+    position: fixed; left: 50%; bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px));
+    transform: translateX(-50%); max-width: min(88vw, 430px);
+    padding: 10px 16px; border-radius: 8px;
+    background: rgba(23,16,9,.95); border: 1px solid rgba(196,182,154,.18);
+    color: #E8D9C6; font: 13px/1.6 "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+    text-align: center; opacity: 0; pointer-events: none;
+    transition: opacity .3s ease; z-index: 3;
+  }
+  #hint.show { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<button id="install" type="button" aria-label="安装到桌面">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" />
+  </svg>
+  <span>下载到桌面</span>
+</button>
+<div id="hint"></div>
+<script src="clock.js"></script>
+<script src="pwa.js"></script>
+<script>
+"use strict";
+/* URL 参数：?t=21:48:05 ?d=10/10 ?w=SATURDAY ?static=1 ?icon=1|2 */
+const Q = new URLSearchParams(location.search);
+const ICON_MODE = Q.get("icon");
+NixieClock.create(document.getElementById("stage"), {
+  static: Q.get("static") === "1",
+  icon: ICON_MODE,
+  time: Q.get("t"),
+  date: Q.get("d"),
+  week: Q.get("w"),
+});
+NixiePWA.register();
+
+const installBtn = document.getElementById("install");
+const hint = document.getElementById("hint");
+if (ICON_MODE) {
+  installBtn.style.display = "none";
+} else {
+  NixiePWA.attach(installBtn, { autoShow: true, hint });
+}
+</script>
+</body>
+</html>
