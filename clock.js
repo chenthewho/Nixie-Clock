@@ -599,8 +599,17 @@ function create(canvas, options) {
     ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(S, 0, 0, S, ox, oy);
 
-    /* 1) 环境底 + 暖光晕（静态层，设计稿的 ambient 没有闪烁参数） */
-    ctx.drawImage(ambCv, 0, 0, DESIGN.W, DESIGN.H);
+    /* 1) 环境底 + 暖光晕（静态层，设计稿的 ambient 没有闪烁参数）。
+       背景按 cover 铺满整个视口：超宽/超高屏上时钟仍按设计比例居中，
+       但不会在两侧露出纯底色的留白。 */
+    {
+      const Sb = Math.max(cv.width / DESIGN.W, cv.height / DESIGN.H);
+      const bw = DESIGN.W * Sb, bh = DESIGN.H * Sb;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(ambCv, (cv.width - bw) / 2, (cv.height - bh) / 2, bw, bh);
+      ctx.restore();
+    }
 
     /* 2) 低分辨率柔光层：地面光池 + 管光晕 + 分隔灯 */
     const gw = glowCv.width, gh = glowCv.height, gs = DESIGN.W / gw;
