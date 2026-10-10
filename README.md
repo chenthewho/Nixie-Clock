@@ -2,20 +2,26 @@
 
 > 辉灯管时钟，跑在区块链上
 
-单文件、零依赖、零图片：`index.html` 用 Canvas 2D 把 `时钟.pen` 设计稿逐像素还原成网页时钟。
-跟随系统时间走时，数字起辉跳动，可直接安装到桌面（PWA）。
+零依赖、零图片：整个站点只有 HTML / CSS / 一点原生 JS，画面由 Canvas 2D 把
+`时钟.pen` 设计稿逐像素还原出来。
+
+- `index.html` —— **官网（Landing）**：机箱里实时跑着的时钟预览 + 功能 / 协议 / 下载。
+- `clock.html` —— **时钟本体（Wallpaper）**：1920×1080 的辉光管时钟，跟随系统时间走时，
+  数字起辉跳动，可直接安装到桌面（PWA）。
 
 ```bash
 # 安装到桌面需要 http(s) 来源；本地预览用任意静态服务器即可
-python3 -m http.server 8080     # 然后打开 http://localhost:8080/
+python3 -m http.server 8080     # 官网 http://localhost:8080/ ，时钟 http://localhost:8080/clock.html
 ```
 
-直接双击 `index.html` 也能看（file:// 下除 PWA 安装外功能一致）。
+直接双击 `index.html` 也能看（file:// 下官网的时钟预览正常，PWA 安装不可用）。
 
 ## 这是什么
 
-一排 6 只辉光管 + 2 个分隔灯，上面一行日期 —— 画面完全由代码在运行时绘制：
-玻璃罩、蜂窝阳极网、玻璃反光、金属底座、地面光池，没有任何图片或外部依赖。
+官网把时钟装进一台米色机箱里：1920 × 1080 的壁纸按设计稿裁进 1680 × 1000 的窗口，
+里面是**同一份渲染器**实时画出来的时钟；机箱外面是暖色工业风的排版与文案。
+时钟本体则是一排 6 只辉光管 + 2 个分隔灯，上面一行日期 —— 玻璃罩、蜂窝阳极网、
+玻璃反光、金属底座、地面光池全部由代码在运行时绘制，没有任何图片或外部依赖。
 
 ## 设计稿对应关系
 
@@ -38,6 +44,27 @@ python3 -m http.server 8080     # 然后打开 http://localhost:8080/
 > 四个 GLSL 着色器按设计稿参数逐行移植为 Canvas 2D 等价实现
 > （径向渐变 / 逐像素六边形 / 描边场 / 高斯高光），没有引入 WebGL。
 
+### 官网（`Nixie Clock — Landing`）
+
+设计稿 `L6OXlR` 是 1920 × 3804 的长页，按 1920 宽逐块还原（屏幕变窄时等比收窄、
+卡片与终端转到多行）：
+
+| 设计稿节点 | 还原方式 |
+| --- | --- |
+| `Nav` / `Nav Rule` | 米色导航条（`#C4B69A`）+ 4px 分隔线，右侧「下载到桌面」接 PWA 安装 |
+| `Hero` | 眉标 / 主标题 / 副标题 / 主按钮 / 规格行，全部取自设计稿的字号与字距 |
+| `Monitor Bezel` | 1740×1150 机箱：散热栅（26 条）、四角螺丝、铭牌 `NIXIE NT-6`、PWR 灯与两颗旋钮 |
+| `Wallpaper Preview` | 1680×1000 圆角窗口，里面是 `clock.js` 的**实时**时钟，按 -120 / -40 裁切；上面叠一层 Scanlines |
+| `Features` | 4 张模块卡（图标框 / 编号 / 标题 / 正文 / 底部散热肋） |
+| `Protocol Card` | TapeOut 协议卡：铭牌 + 绿色 LIVE 灯、标题段、终端窗口与三条要点 |
+| `CTA Section` | 下载卡：标题 / 正文 / 主按钮 / `STATUS READY` 读数条 |
+| `Caution Stripe` / `Footer` | 45° 警示斜纹（10px 琥珀 + 10px 深底）+ 页脚 |
+
+> 与设计稿逐块比对（1920 宽）：导航 104px、机箱 1740×1150、功能卡 389 宽、
+> 协议卡 1664×595、页脚 105px，位置与尺寸误差都在 1~2px 内。
+> 唯一的系统性差异是文本行高 —— 设计稿用字体自带行高，本实现按设计稿标注的
+> 行高（如正文 28px、终端 17px）逐条对齐。
+
 ## 功能
 
 - **走时**：每秒同步系统时间，六只管子分别显示 时 分 秒。
@@ -50,11 +77,15 @@ python3 -m http.server 8080     # 然后打开 http://localhost:8080/
 - **背景抖动**：环境底色是 0.022 这种极浅的渐变，直接画会只剩 7 个灰阶、横带高达 240px。
   叠一层**静止**的中灰噪声（`overlay`，幅度对齐设计稿 grain 的 ±0.0055）把横带打散到 6px
   —— 噪声必须静止，一动就变成「带边一直在爬」。
-- **PWA 安装**：`manifest.webmanifest` + `sw.js` 离线缓存；页面底部「下载到桌面」按钮
-  走 `beforeinstallprompt`，iOS 下会提示「分享 → 添加到主屏幕」。
-- **自适应**：任意窗口尺寸等比缩放居中，画布按设备像素比渲染。
+- **PWA 安装**：`manifest.webmanifest` + `sw.js` 离线缓存（官网与时钟都进外壳）；
+  官网导航 / 主按钮与时钟页底部的「下载到桌面」共用 `pwa.js`：能装就走
+  `beforeinstallprompt`，iOS 下提示「分享 → 添加到主屏幕」。
+- **自适应**：官网按 1920 设计稿等比收窄（4 卡 → 2 卡 → 1 卡，终端转到要点下方）；
+  时钟在任意窗口尺寸下等比缩放居中，画布按设备像素比渲染。
+- **省电**：官网的机箱预览滚出视口即停帧（`IntersectionObserver` + `NixieClock.start/stop`），
+  `prefers-reduced-motion` 下预览直接定格。
 
-## URL 参数
+## URL 参数（`clock.html`）
 
 | 参数 | 作用 | 例子 |
 | --- | --- | --- |
@@ -69,14 +100,19 @@ python3 -m http.server 8080     # 然后打开 http://localhost:8080/
 ## 文件
 
 ```
-clock.html                 页面骨架（画布 / 安装按钮，设计空间 1920×1080）
+index.html                 官网（Landing）：全部样式内联，1920 设计稿 + 自适应
+clock.html                 时钟骨架（画布 / 安装按钮，设计空间 1920×1080）
 clock.js                   NixieClock.create() —— 全部绘制与动画逻辑
 pwa.js                     NixiePWA —— 安装按钮 / Service Worker 注册
-manifest.webmanifest       PWA 清单
+manifest.webmanifest       PWA 清单（start_url = clock.html）
 sw.js                      Service Worker（应用外壳 cache-first）
-fonts/                     Barlow Condensed Thin + Inter（本地字体，可离线）
+fonts/                     官网：Chakra Petch / ZCOOL QingKe HuangYou / IBM Plex Mono / Noto Sans SC
+                           时钟：Barlow Condensed Thin / Inter —— 全部本地子集，可离线
 icons/                     192 / 512 / maskable / apple-touch
 ```
+
+> 官网用的四款中英文字体按页面实际用到的 292 个字符向 Google Fonts 取子集，
+> 合计约 90KB；加上时钟的字体，整个站点离线可用且没有任何第三方请求。
 
 ## 可调参数
 

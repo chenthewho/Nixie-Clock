@@ -1,14 +1,24 @@
 /* 辉光管时钟 · Service Worker
-   离线优先：应用外壳（HTML/字体/图标）走 cache-first，其余走网络。 */
-const VERSION = "nixie-v2";
+   离线优先：应用外壳（官网 + 时钟 + 字体 + 图标）走 cache-first，其余走网络。 */
+const VERSION = "nixie-v3";
 const SHELL = [
+  "./",
+  "./index.html",
   "./clock.html",
+  "./clock.js",
+  "./pwa.js",
   "./manifest.webmanifest",
   "./fonts/barlow-condensed-100.woff2",
   "./fonts/inter-400.woff2",
   "./fonts/inter-500.woff2",
+  "./fonts/chakra-petch-700.woff2",
+  "./fonts/zcool-qingke-huangyou-400.woff2",
+  "./fonts/ibm-plex-mono-400.woff2",
+  "./fonts/ibm-plex-mono-500.woff2",
+  "./fonts/noto-sans-sc-400.woff2",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/icon-maskable-512.png",
 ];
 
 self.addEventListener("install", (e) => {
@@ -38,7 +48,7 @@ self.addEventListener("fetch", (e) => {
         const copy = res.clone();
         caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => {});
         return res;
-      }).catch(() => caches.match("./clock.html"));
+      }).catch(() => caches.match("./index.html"));
     })
   );
 });

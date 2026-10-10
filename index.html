@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>辉光管时钟 · Nixie Clock — 把时间，留在温暖的辉光里</title>
+<meta name="description" content="以辉光管为原型的桌面时钟应用：六支 IN-14 真空管、蜂窝阳极网与金属底座全部由代码实时绘制，时间取自 TapeOut 协议上的链上永恒之钟。" />
+<meta name="theme-color" content="#14120E" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="辉光时钟" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<style>
+  /* ------------------------------------------------------------------
+     字体：与设计稿一致的五款字体，全部本地子集化，离线可用
+     ------------------------------------------------------------------ */
+  @font-face { font-family: "Chakra Petch"; font-weight: 700; font-style: normal; font-display: swap;
+    src: url("fonts/chakra-petch-700.woff2") format("woff2"); }
+  @font-face { font-family: "ZCOOL QingKe HuangYou"; font-weight: 400; font-style: normal; font-display: swap;
+    src: url("fonts/zcool-qingke-huangyou-400.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-style: normal; font-display: swap;
+    src: url("fonts/ibm-plex-mono-400.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-style: normal; font-display: swap;
+    src: url("fonts/ibm-plex-mono-500.woff2") format("woff2"); }
+  @font-face { font-family: "Noto Sans SC"; font-weight: 400; font-style: normal; font-display: swap;
+    src: url("fonts/noto-sans-sc-400.woff2") format("woff2"); }
+
+  /* ------------------------------------------------------------------
+     设计变量（取自 时钟.pen / Nixie Clock — Landing）
+     ------------------------------------------------------------------ */
+  :root {
+    --bg: #14120E;
+    --beige: #C4B69A;
+    --edge: #8E8168;
+    --ink: #1E1B15;
+    --ink-2: #4A4436;
+    --amber: #FF9E2C;
+    --amber-deep: #7A4A08;
+    --glow: #FF7A1A;
+    --cream: #EDE3CC;
+    --dim: #9C907A;
+    --mono-dim: #6E6350;
+    --mono-dim-2: #8A7F68;
+    --surface: #100E0B;
+    --rule: #17110C;
+    --terminal: #0D0B08;
+    --live: #7FA85A;
+    --live-text: #9CC47A;
+    --pad: clamp(20px, 6.667vw, 128px);
+    --font-brand: "Chakra Petch", "Inter", system-ui, sans-serif;
+    --font-display: "ZCOOL QingKe HuangYou", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+    --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--cream);
+    font: 400 16px/1.5 var(--font-body);
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  h1, h2, h3, p, ul, figure { margin: 0; }
+  ul { padding: 0; list-style: none; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; color: inherit; }
+
+  .rule { height: 1px; background: var(--rule); }
+  .eyebrow { font: 500 13px/normal var(--font-mono); letter-spacing: 3px; color: #C99A4E; }
+
+  /* ---------------------------------- 导航 --------------------------------- */
+  .nav {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px; height: 104px; padding: 0 var(--pad); background: var(--beige);
+  }
+  .brand {
+    font: 700 30px/normal var(--font-brand); letter-spacing: 10px; color: var(--ink);
+    white-space: nowrap;
+  }
+  .nav-links { display: flex; align-items: center; gap: clamp(20px, 2.3vw, 44px); }
+  .nav-links a {
+    font: 400 16px/normal var(--font-display); letter-spacing: 2px; color: var(--ink-2);
+    transition: color .18s ease;
+  }
+  .nav-links a:hover, .nav-links a:focus-visible { color: var(--ink); }
+  .nav-rule { height: 4px; background: var(--edge); }
+
+  /* 「下载到桌面」按钮：导航 / Hero 主按钮 / CTA 共用 */
+  .install {
+    display: inline-flex; align-items: center; gap: 10px; flex: none;
+    padding: 12px 24px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--ink); color: var(--amber);
+    font: 500 16px/normal var(--font-display);
+    transition: transform .18s ease, background .18s ease;
+  }
+  .install:hover { transform: translateY(-1px); background: #2A241B; }
+  .install:active { transform: translateY(1px); }
+  .install svg { width: 16px; height: 16px; flex: none; }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 17px 40px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--amber); color: #1A1206;
+    font: 500 18px/normal var(--font-display);
+    box-shadow: 0 4px 0 var(--amber-deep);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .btn-primary svg { width: 19px; height: 19px; flex: none; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 5px 0 var(--amber-deep); }
+  .btn-primary:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--amber-deep); }
+
+  /* ---------------------------------- Hero -------------------------------- */
+  .hero {
+    display: flex; flex-direction: column; align-items: center; gap: 24px;
+    padding: clamp(56px, 9vw, 104px) clamp(16px, 4.7vw, 90px) clamp(48px, 7.6vw, 88px);
+  }
+  .headline {
+    max-width: 980px; text-align: center;
+    font: 400 clamp(38px, 3.44vw, 66px)/1.3 var(--font-display);
+    letter-spacing: 2px; color: var(--cream);
+  }
+  .subhead {
+    max-width: 760px; text-align: center;
+    font-size: clamp(15px, .885vw, 17px); line-height: 32px; color: var(--dim);
+  }
+  .spec-row {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px;
+    font: 500 11px/normal var(--font-mono); letter-spacing: 2px; color: var(--mono-dim);
+  }
+  .spec-row .sep { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-2); }
+
+  /* 显示器外壳：设计稿里 1740 × 1150 的工业机箱 */
+  .bezel {
+    position: relative; width: 100%; max-width: 1740px;
+    display: flex; flex-direction: column; gap: 20px;
+    padding: 28px 30px 26px; border-radius: 30px;
+    background: var(--beige); box-shadow: 0 10px 24px #00000066;
+  }
+  .vent { display: flex; justify-content: space-between; height: 12px; }
+  .vent i { width: 3px; height: 12px; border-radius: 1.5px; background: #9E9078; }
+
+  .preview {
+    position: relative; aspect-ratio: 1680 / 1000; overflow: hidden;
+    border-radius: 10px; background: #0A0705;
+  }
+  /* 设计稿把 1920 × 1080 的壁纸按 -120 / -40 裁进 1680 × 1000 的窗口 */
+  .preview canvas {
+    position: absolute; left: -7.1429%; top: -4%; width: 114.2857%; height: 108%;
+    display: block;
+  }
+  .preview::after {           /* Scanlines：设计稿里叠在壁纸上的一层反射 */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    mix-blend-mode: screen;
+    background-image: repeating-linear-gradient(0deg,
+      rgba(255, 255, 255, .035) 0 1px, rgba(0, 0, 0, 0) 1px 3px);
+  }
+
+  .strip { display: flex; align-items: center; justify-content: space-between; height: 44px; }
+  .plate {
+    padding: 8px 14px; border-radius: 4px; background: var(--ink); color: var(--amber);
+    font: 500 12px/normal var(--font-mono); letter-spacing: 3px;
+  }
+  .controls { display: flex; align-items: center; gap: 20px; }
+  .pwr {
+    display: flex; align-items: center; gap: 8px;
+    font: 500 11px/normal var(--font-mono); letter-spacing: 2px; color: var(--ink-2);
+  }
+  .pwr i { width: 10px; height: 10px; border-radius: 50%; background: var(--amber); filter: blur(3.5px); }
+  .knob { position: relative; width: 30px; height: 30px; border-radius: 50%; background: #2A2620; }
+  .knob::after {
+    content: ""; position: absolute; left: 13.5px; top: 4px; width: 3px; height: 11px;
+    border-radius: 1.5px; background: var(--beige);
+  }
+  .screw {
+    position: absolute; width: 18px; height: 18px; border-radius: 50%;
+    background: linear-gradient(-135deg, #CFC2A8 14.645%, #8E8168 85.355%);
+  }
+  .screw::after {
+    content: ""; position: absolute; left: 8px; top: 3px; width: 2px; height: 12px;
+    border-radius: 1px; background: #8A7F68;
+  }
+  .screw.tl { left: 16px; top: 16px; }    .screw.tr { right: 16px; top: 16px; }
+  .screw.bl { left: 16px; bottom: 16px; } .screw.br { right: 16px; bottom: 16px; }
+
+  .caption { font: 400 12px/normal var(--font-mono); letter-spacing: 2px; color: var(--mono-dim); text-align: center; }
+
+  /* --------------------------------- 功能 --------------------------------- */
+  .features {
+    display: flex; flex-direction: column; gap: 56px;
+    padding: clamp(56px, 5vw, 96px) var(--pad) clamp(64px, 5.4vw, 104px);
+  }
+  .section-head { display: flex; flex-direction: column; gap: 16px; }
+  .section-title {
+    max-width: 840px;
+    font: 400 clamp(30px, 2.3vw, 44px)/1.3 var(--font-display); letter-spacing: 2px; color: var(--cream);
+  }
+  .feature-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 36px; }
+  .card {
+    display: flex; flex-direction: column; gap: 16px; padding: 26px;
+    border-radius: 14px; background: var(--beige); box-shadow: 0 8px 18px #00000055;
+  }
+  .card-index { font: 500 11px/normal var(--font-mono); letter-spacing: 2px; color: var(--edge); }
+  .icon-box {
+    display: flex; align-items: center; justify-content: center; flex: none;
+    width: 52px; height: 52px; border-radius: 10px; background: var(--ink);
+  }
+  .icon-box svg { width: 24px; height: 24px; color: var(--glow); }
+  .card-title { font: 500 22px/normal var(--font-display); letter-spacing: 1px; color: var(--ink); }
+  .card-body { font-size: 15px; line-height: 28px; color: var(--ink-2); }
+  .ribs { display: flex; flex-direction: column; gap: 5px; margin-top: auto; }
+  .ribs i { height: 2px; border-radius: 1px; background: #A89A7E; }
+
+  /* -------------------------------- 协议 ---------------------------------- */
+  .protocol { padding: 0 var(--pad) clamp(64px, 6.25vw, 120px); }
+  .protocol-card {
+    display: flex; flex-direction: column; gap: 34px;
+    padding: clamp(28px, 2.7vw, 48px) clamp(24px, 2.7vw, 52px);
+    border-radius: 20px; background: var(--beige); box-shadow: 0 10px 22px #00000055;
+  }
+  .protocol-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .live {
+    display: flex; align-items: center; gap: 9px;
+    font: 500 12px/normal var(--font-mono); letter-spacing: 2px; color: var(--ink-2);
+  }
+  .live i { width: 9px; height: 9px; border-radius: 50%; background: var(--live); filter: blur(3px); }
+  .protocol-title-block { display: flex; flex-direction: column; gap: 14px; }
+  .protocol-title {
+    font: 400 clamp(30px, 2.4vw, 46px)/1.3 var(--font-display); letter-spacing: 2px; color: var(--ink);
+  }
+  .protocol-body { max-width: 1000px; font-size: 16px; line-height: 30px; color: var(--ink-2); }
+  .protocol-split { display: grid; grid-template-columns: minmax(0, 700fr) minmax(0, 816fr); gap: 44px; }
+  .terminal {
+    display: flex; flex-direction: column; gap: 10px; align-self: start;
+    padding: 26px 28px; border-radius: 12px; background: var(--terminal);
+    font: 400 13px/1.3 var(--font-mono); letter-spacing: 1px; color: var(--amber);
+    overflow-x: auto;
+  }
+  .terminal .verify {
+    display: flex; align-items: center; gap: 8px; color: var(--live-text);
+    font-weight: 500; font-size: 12px; letter-spacing: 2px;
+  }
+  .terminal .verify i { width: 8px; height: 8px; border-radius: 50%; background: var(--live); filter: blur(2.5px); }
+  .points { display: flex; flex-direction: column; gap: 26px; }
+  .point { display: flex; flex-direction: column; gap: 8px; }
+  .point-index { font: 500 11px/normal var(--font-mono); letter-spacing: 2px; color: var(--edge); }
+  .point-title { font: 400 22px/normal var(--font-display); color: var(--ink); }
+  .point-body { font-size: 15px; line-height: 27px; color: var(--ink-2); }
+
+  /* --------------------------------- CTA ---------------------------------- */
+  .cta { padding: 8px var(--pad) clamp(64px, 6.25vw, 120px); }
+  .cta-card {
+    display: flex; flex-direction: column; align-items: center; gap: 22px;
+    padding: clamp(36px, 3.3vw, 64px) clamp(28px, 3.75vw, 72px);
+    border-radius: 16px; background: var(--beige); box-shadow: 0 10px 22px #00000055;
+    text-align: center;
+  }
+  .cta-title { font: 400 clamp(30px, 2.4vw, 46px)/normal var(--font-display); letter-spacing: 2px; color: var(--ink); }
+  .cta-body { font-size: 16px; line-height: 29px; color: var(--ink-2); }
+  .readout {
+    display: inline-flex; align-items: center; gap: 12px; padding: 12px 20px;
+    border-radius: 6px; background: var(--ink); color: var(--amber);
+    font: 500 12px/normal var(--font-mono); letter-spacing: 2px; text-align: left;
+  }
+  .readout i { width: 9px; height: 9px; border-radius: 50%; background: var(--amber); filter: blur(3px); flex: none; }
+
+  /* -------------------------------- 页脚 ---------------------------------- */
+  .caution {
+    height: 14px;
+    background-image: repeating-linear-gradient(45deg, var(--amber) 0 10px, #1F1B16 10px 20px);
+  }
+  .footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    padding: 38px var(--pad); background: var(--surface);
+  }
+  .footer-left { display: flex; align-items: center; gap: 20px; min-width: 0; }
+  .footer-brand { font: 700 22px/normal var(--font-brand); letter-spacing: 8px; color: var(--beige); }
+  .copyright { font: 400 12px/normal var(--font-mono); letter-spacing: 1px; color: var(--mono-dim); }
+  .footer-links { display: flex; align-items: center; gap: 32px; }
+  .footer-links a { font: 400 15px/normal var(--font-display); color: var(--mono-dim-2); transition: color .18s ease; }
+  .footer-links a:hover, .footer-links a:focus-visible { color: var(--beige); }
+
+  /* --------------------------- 安装兜底提示 -------------------------------- */
+  #hint {
+    position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(8px); z-index: 9;
+    max-width: min(90vw, 460px); padding: 12px 18px; border-radius: 8px;
+    background: var(--ink); border: 1px solid rgba(196, 182, 154, .22);
+    color: var(--cream); font-size: 13px; line-height: 1.6; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease;
+  }
+  #hint.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+
+  /* -------------------------------- 自适应 --------------------------------- */
+  @media (max-width: 1100px) {
+    .feature-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .protocol-split { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  }
+  @media (max-width: 860px) {
+    .nav { height: 84px; }
+    .nav-links { display: none; }
+    .brand { font-size: 24px; letter-spacing: 7px; }
+    .bezel { padding: 18px 18px 16px; border-radius: 20px; gap: 14px; }
+    .screw { display: none; }
+    .footer { flex-direction: column; align-items: flex-start; gap: 18px; }
+  }
+  @media (max-width: 620px) {
+    .feature-row { grid-template-columns: minmax(0, 1fr); }
+    .install { padding: 11px 18px; }
+    .btn-primary { padding: 15px 28px; }
+    .subhead { line-height: 28px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="#top">NIXIE</a>
+  <nav class="nav-links" aria-label="页面导航">
+    <a href="#hero">概览</a>
+    <a href="#features">功能</a>
+    <a href="#protocol">协议</a>
+    <a href="#cta">常见问题</a>
+  </nav>
+  <button class="install" type="button" data-install>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" />
+    </svg>
+    <span>下载到桌面</span>
+  </button>
+</header>
+<div class="nav-rule"></div>
+
+<main id="top">
+  <section class="hero" id="hero">
+    <p class="eyebrow">MODEL NT-6 · 链上永恒之钟 · TAPEOUT PROTOCOL</p>
+    <h1 class="headline">把时间，留在温暖的辉光里</h1>
+    <p class="subhead">以辉光管为原型的桌面时钟应用。时间读取自 TapeOut 协议上的链上永恒之钟——永不停止，永不掉线。六支真空管在夜里安静地呼吸，装进桌面就暖了起来。</p>
+    <div class="actions">
+      <button class="btn-primary" type="button" data-install>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" />
+        </svg>
+        <span>下载到桌面</span>
+      </button>
+    </div>
+    <ul class="spec-row">
+      <li>TUBES 6 × IN-14</li>
+      <li class="sep" aria-hidden="true"></li>
+      <li>CHAIN TAPEOUT MAINNET</li>
+      <li class="sep" aria-hidden="true"></li>
+      <li>BLOCK 19,204,881</li>
+      <li class="sep" aria-hidden="true"></li>
+      <li>MODE 24H</li>
+    </ul>
+
+    <figure class="bezel">
+      <div class="vent" aria-hidden="true"></div>
+      <div class="preview">
+        <canvas id="hero-clock" role="img" aria-label="辉光管时钟实时预览"></canvas>
+      </div>
+      <div class="strip">
+        <span class="plate">NIXIE NT-6</span>
+        <div class="controls">
+          <span class="pwr"><i></i>PWR</span>
+          <span class="knob" aria-hidden="true"></span>
+          <span class="knob" aria-hidden="true"></span>
+        </div>
+      </div>
+      <span class="screw tl" aria-hidden="true"></span>
+      <span class="screw tr" aria-hidden="true"></span>
+      <span class="screw bl" aria-hidden="true"></span>
+      <span class="screw br" aria-hidden="true"></span>
+    </figure>
+
+    <p class="caption">1920 × 1080 · 辉光频率与亮度经过调校 · 静置时安静呼吸</p>
+  </section>
+  <div class="rule"></div>
+
+  <section class="features" id="features">
+    <div class="section-head">
+      <p class="eyebrow">SPECIFICATION / 设计细节</p>
+      <h2 class="section-title">每一条光线，都有它的分寸</h2>
+    </div>
+    <div class="feature-row">
+      <article class="card">
+        <p class="card-index">MODULE 01</p>
+        <span class="icon-box" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+          </svg>
+        </span>
+        <h3 class="card-title">温暖辉光</h3>
+        <p class="card-body">辉光管的光晕带着轻微呼吸，亮度与闪烁频率都经过调校，长时间注视也不会觉得刺眼。</p>
+        <div class="ribs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      </article>
+      <article class="card">
+        <p class="card-index">MODULE 02</p>
+        <span class="icon-box" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" /><path d="m14.31 8 5.74 9.94" /><path d="M9.69 8h11.48" /><path d="m7.38 12 5.74-9.94" /><path d="M9.69 16 3.95 6.06" /><path d="M14.31 16H2.83" /><path d="m16.62 12-5.74 9.94" />
+          </svg>
+        </span>
+        <h3 class="card-title">真实质感</h3>
+        <p class="card-body">蜂窝阳极网、玻璃罩反光与金属底座的层次，全部由实时着色器渲染，近看依旧细腻。</p>
+        <div class="ribs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      </article>
+      <article class="card">
+        <p class="card-index">MODULE 03</p>
+        <span class="icon-box" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="14" x="2" y="3" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" />
+          </svg>
+        </span>
+        <h3 class="card-title">桌面常驻</h3>
+        <p class="card-body">轻量安装，随系统启动，安静地待在桌面一角，抬眼就能看到时间。</p>
+        <div class="ribs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      </article>
+      <article class="card">
+        <p class="card-index">MODULE 04</p>
+        <span class="icon-box" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+          </svg>
+        </span>
+        <h3 class="card-title">静默运行</h3>
+        <p class="card-body">没有声音，没有打扰。夜色越深，辉光越温柔，时间就在那里安静地发亮。</p>
+        <div class="ribs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="protocol" id="protocol">
+    <div class="protocol-card">
+      <div class="protocol-head">
+        <span class="plate">TAPEOUT PROTOCOL</span>
+        <span class="live"><i></i>ON-CHAIN · LIVE</span>
+      </div>
+      <div class="protocol-title-block">
+        <h2 class="protocol-title">一台永不停止的永恒之钟</h2>
+        <p class="protocol-body">时间不再来自某台设备的系统时钟，而是来自链上共识。合约部署的那一刻起，它就一直在走——没有停机，没有维护，也没有终点。</p>
+      </div>
+      <div class="protocol-split">
+        <div class="terminal">
+          <span>&gt; TAPEOUT_PROTOCOL :: MAINNET</span>
+          <span>&gt; BLOCK HEIGHT 19,204,881</span>
+          <span>&gt; UPTIME 1,438 DAYS · 0 MISSED TICKS</span>
+          <span>&gt; HEAD SIGNATURE 0x7f3a…c21d</span>
+          <span>&gt; TICK INTERVAL 1.000000 s</span>
+          <span>&gt; NEXT CHECKPOINT IN 00:00:59</span>
+          <span class="verify"><i></i>VERIFIED</span>
+        </div>
+        <div class="points">
+          <div class="point">
+            <p class="point-index">01 / 运行于区块链</p>
+            <h3 class="point-title">运行于区块链</h3>
+            <p class="point-body">所有时间戳取自链上共识，由全网节点共同维护，不依赖任何单一服务器。</p>
+          </div>
+          <div class="point">
+            <p class="point-index">02 / 永恒之钟</p>
+            <h3 class="point-title">永恒之钟</h3>
+            <p class="point-body">协议一旦部署便持续运行，不因关机、断网或版本更新而中断，时间永远向前。</p>
+          </div>
+          <div class="point">
+            <p class="point-index">03 / TapeOut 协议</p>
+            <h3 class="point-title">TapeOut 协议</h3>
+            <p class="point-body">基于 TapeOut 协议构建，每一次走时都可验证、可追溯，任何人都能独立校验。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta" id="cta">
+    <div class="cta-card">
+      <h2 class="cta-title">现在，让桌面暖起来</h2>
+      <p class="cta-body">免费下载辉光管桌面时钟应用。时间来自链上永恒之钟，可自定义辉光强度、24 小时制与夜间自动降亮。</p>
+      <button class="btn-primary" type="button" data-install>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" />
+        </svg>
+        <span>下载到桌面</span>
+      </button>
+      <span class="readout"><i></i>STATUS READY · TAPEOUT MAINNET · BLOCK 19,204,881</span>
+    </div>
+  </section>
+</main>
+
+<div class="caution" aria-hidden="true"></div>
+<div class="rule"></div>
+<footer class="footer">
+  <div class="footer-left">
+    <span class="footer-brand">NIXIE</span>
+    <span class="copyright">© 2024 辉光管桌面时钟 · BUILT ON TAPEOUT</span>
+  </div>
+  <nav class="footer-links" aria-label="页脚导航">
+    <a href="#features">更新日志</a>
+    <a href="#protocol">使用说明</a>
+    <a href="#cta">反馈</a>
+  </nav>
+</footer>
+
+<div id="hint" role="status" aria-live="polite"></div>
+
+<script src="clock.js"></script>
+<script src="pwa.js"></script>
+<script>
+"use strict";
+/* Hero 里的时钟就是时钟本体：同一份 clock.js 渲染，按设计稿裁进机箱窗口 */
+const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const heroClock = NixieClock.create(document.getElementById("hero-clock"), { static: reduced });
+
+/* 预览滚出视口就停帧，省电 */
+if ("IntersectionObserver" in window) {
+  new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) heroClock.start();
+    else heroClock.stop();
+  }, { rootMargin: "160px" }).observe(document.querySelector(".preview"));
+}
+
+NixiePWA.register();
+const hint = document.getElementById("hint");
+document.querySelectorAll("[data-install]").forEach((b) => NixiePWA.attach(b, { hint }));
+</script>
+</body>
+</html>
