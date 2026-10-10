@@ -783,9 +783,19 @@ function create(canvas, options) {
 
   return {
     resize,
+    /* start/stop 只控制主循环：官网首页把它挂在 IntersectionObserver 上，
+       机箱预览滚出视口就停帧。destroy 才卸载 resize 监听。 */
+    start() {
+      if (raf) return;
+      last = performance.now();
+      raf = requestAnimationFrame(tick);
+    },
     stop() {
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
+    },
+    destroy() {
+      this.stop();
       window.removeEventListener("resize", onResize);
     },
   };
