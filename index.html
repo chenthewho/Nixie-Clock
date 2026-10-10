@@ -153,9 +153,14 @@ const STATIC = Q.get("static") === "1";
 const FIXED_T = Q.get("t"), FIXED_D = Q.get("d"), FIXED_W = Q.get("w");
 
 /* -------------------------------- 画布 ---------------------------------- */
+/* 全屏柔光：亮部降采样→模糊→加法叠回，让灯丝、玻璃边缘、金属件都不再“硬” */
+const BLOOM = 0.55;
+const bloomCv = document.createElement("canvas");
+const bloomG = bloomCv.getContext("2d");
+
 const cv = document.getElementById("stage");
 const ctx = cv.getContext("2d");
-let vs = 1, vox = 0, voy = 0, SS = 1;
+let vs = 1, vox = 0, voy = 0, SS = 1, GS = 1;
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -168,26 +173,33 @@ function resize() {
   vs = s * dpr;
   vox = (w * dpr - DW * vs) / 2;
   voy = (h * dpr - DH * vs) / 2;
-  SS = Math.min(2, Math.max(1, dpr * s));
+  // 关键：离屏层按“设计单位 × 当前设备缩放”光栅化。
+  // 若固定按设计分辨率渲染再缩小，细密网孔会被降采样成摩尔纹，看起来又硬又脏。
+  SS = Math.min(2, Math.max(0.55, vs));
+  GS = SS;
+  bloomCv.width = Math.max(1, Math.round(cv.width / 4));
+  bloomCv.height = Math.max(1, Math.round(cv.height / 4));
   buildPatterns();
+  buildGlowCanvas();
   buildTubeLayers();
 }
 
 /* ------------------------------ 蜂窝网图案 ------------------------------- */
 /* 实测：孔距 ≈ 11.6px，孔径 ≈ 0.58 倍孔距 */
 const MESH = { pitch: 10.2, hole: 0.62, r: 0.46 };
-const SUPS = 4;
+
 let holePat = null;
 
 function makePattern(webColor, holeColor) {
-  const t = Math.round(MESH.pitch * SUPS);
+  // 每个图案 tile 直接按设备像素大小生成：缩放后不会产生摩尔纹
+  const t = Math.max(4, Math.round(MESH.pitch * vs));
   const c = document.createElement("canvas");
   c.width = c.height = t;
   const g = c.getContext("2d");
   if (webColor) { g.fillStyle = webColor; g.fillRect(0, 0, t, t); }
   // 圆角方孔 + 轻微模糊：孔径约为孔距的 0.62，边缘柔化以贴近实拍金属网
   const hs = t * MESH.hole, r = hs * MESH.r, o = (t - hs) / 2;
-  g.filter = "blur(2.6px)";
+  g.filter = `blur(${Math.max(0.45, t * 0.07)}px)`;
   g.fillStyle = holeColor;
   g.beginPath();
   g.moveTo(o + r, o);
@@ -199,12 +211,12 @@ function makePattern(webColor, holeColor) {
   g.fill();
   g.filter = "none";
   const p = ctx.createPattern(c, "repeat");
-  p.setTransform(new DOMMatrix().scale(1 / SUPS));
+  p.setTransform(new DOMMatrix().scale(1 / (t / MESH.pitch)));
   return p;
 }
 function buildPatterns() {
   // 乘法网：网线为白（不改变亮度），孔洞压暗 → 发光透过时孔比网暗
-  holePat = makePattern(null, "rgba(0,0,0,0.58)");   // 网线透明 + 孔洞压暗
+  holePat = makePattern(null, "rgba(0,0,0,0.74)");   // 网线透明 + 孔洞压暗
 }
 
 /* ------------------------------- 路径工具 -------------------------------- */
@@ -285,8 +297,11 @@ function drawUnder(g, cx) {
     const t = (dx - B.x0) / bw;
     bg.addColorStop(Math.min(1, Math.max(0, t)), `rgb(${v},${v},${v + 2})`);
   }
+  g.save();
+  g.filter = "blur(1.6px)";                 // 底座边缘同样羽化
   g.fillStyle = bg;
   g.fillRect(cx + B.x0, B.y0, bw, B.y1 - B.y0);
+  g.restore();
   // 上下边缘各 3px 过渡，避免出现硬直角“塑料块”
   const fadeT = g.createLinearGradient(0, B.y0 - 4, 0, B.y0 + 4);
   fadeT.addColorStop(0, "rgba(0,0,0,1)"); fadeT.addColorStop(0.5, "rgba(0,0,0,0.35)"); fadeT.addColorStop(1, "rgba(0,0,0,0)");
@@ -300,8 +315,8 @@ function drawUnder(g, cx) {
   g.save();
   g.clip(gp);
   const ig = g.createLinearGradient(cx - G.halfW, 0, cx + G.halfW, 0);
-  ig.addColorStop(0.00, "#2b2926");
-  ig.addColorStop(0.10, "#1d1b19");
+  ig.addColorStop(0.00, "#2f2a24");
+  ig.addColorStop(0.10, "#201d1a");
   ig.addColorStop(0.35, "#0c0c0c");
   ig.addColorStop(0.72, "#080808");
   ig.addColorStop(1.00, "#050505");
@@ -317,8 +332,8 @@ function drawUnder(g, cx) {
   g.fillRect(cx - G.halfW, 500, G.halfW * 2, 410);
   // 穹顶压暗
   const tg = g.createLinearGradient(0, 420, 0, 545);
-  tg.addColorStop(0, "rgba(0,0,0,0.55)");
-  tg.addColorStop(0.55, "rgba(0,0,0,0.26)");
+  tg.addColorStop(0, "rgba(0,0,0,0.68)");
+  tg.addColorStop(0.55, "rgba(0,0,0,0.34)");
   tg.addColorStop(1, "rgba(0,0,0,0)");
   g.fillStyle = tg;
   g.fillRect(cx - G.halfW, 396, G.halfW * 2, 150);
@@ -327,17 +342,20 @@ function drawUnder(g, cx) {
   const x0 = cx + P.x0, x1 = cx + P.x1;
   // 金属框：左右压条按实测（左峰 126 / 右峰 103），上下压条约 50~80
   const fg = g.createLinearGradient(x0, 0, x1, 0);
-  fg.addColorStop(0.000, "rgb(96,94,90)");
-  fg.addColorStop(0.035, "rgb(120,118,113)");
-  fg.addColorStop(0.055, "rgb(126,124,118)");
-  fg.addColorStop(0.080, "rgb(70,68,64)");
-  fg.addColorStop(0.500, "rgb(60,58,55)");
-  fg.addColorStop(0.925, "rgb(68,66,62)");
-  fg.addColorStop(0.955, "rgb(103,101,96)");
-  fg.addColorStop(0.980, "rgb(84,82,78)");
-  fg.addColorStop(1.000, "rgb(42,40,38)");
+  fg.addColorStop(0.000, "rgb(78,76,72)");
+  fg.addColorStop(0.035, "rgb(98,96,92)");
+  fg.addColorStop(0.055, "rgb(104,102,97)");
+  fg.addColorStop(0.080, "rgb(56,54,52)");
+  fg.addColorStop(0.500, "rgb(47,45,43)");
+  fg.addColorStop(0.925, "rgb(53,51,49)");
+  fg.addColorStop(0.955, "rgb(84,82,78)");
+  fg.addColorStop(0.980, "rgb(68,66,63)");
+  fg.addColorStop(1.000, "rgb(34,32,30)");
+  g.save();
+  g.filter = "blur(1.1px)";                 // 框边羽化，避免“画框”般的硬直角
   g.fillStyle = fg;
   g.fillRect(x0, P.y0, x1 - x0, P.y1 - P.y0);
+  g.restore();
   // 网孔区底色（暖灰）
   const mg = g.createLinearGradient(0, P.y0, 0, P.y1);
   mg.addColorStop(0, "#29251f");
@@ -407,13 +425,13 @@ function drawOver(g, cx) {
   /* 穹顶：左肩大面积冷灰漫反射（实测中心 ~(cx-70, 500)，峰值 ~(83,82,94)） */
   g.save();
   g.globalCompositeOperation = "lighter";
-  const blob = g.createRadialGradient(cx - 70, 500, 3, cx - 70, 500, 52);
-  blob.addColorStop(0, "rgba(148,154,180,0.42)");
-  blob.addColorStop(0.35, "rgba(120,126,148,0.24)");
-  blob.addColorStop(0.7, "rgba(94,98,114,0.07)");
+  const blob = g.createRadialGradient(cx - 68, 498, 2, cx - 68, 498, 40);
+  blob.addColorStop(0, "rgba(152,158,186,0.46)");
+  blob.addColorStop(0.35, "rgba(122,128,150,0.22)");
+  blob.addColorStop(0.7, "rgba(94,98,114,0.05)");
   blob.addColorStop(1, "rgba(84,88,102,0)");
   g.fillStyle = blob;
-  g.beginPath(); g.arc(cx - 70, 500, 52, 0, 7); g.fill();
+  g.beginPath(); g.arc(cx - 68, 498, 40, 0, 7); g.fill();
 
   // 肩部上缘的细高光弧
   g.filter = "blur(2.5px)";
@@ -431,10 +449,10 @@ function drawOver(g, cx) {
 
   /* 颈部与顶部小球：玻璃厚度带来的灰调（实测颈中 ~45、颈下 ~25、球 ~30） */
   const nk = g.createLinearGradient(0, 396, 0, 480);
-  nk.addColorStop(0.00, "rgba(140,140,146,0.20)");
-  nk.addColorStop(0.22, "rgba(150,150,156,0.26)");
-  nk.addColorStop(0.45, "rgba(150,150,156,0.20)");
-  nk.addColorStop(0.72, "rgba(150,150,156,0.09)");
+  nk.addColorStop(0.00, "rgba(140,140,146,0.12)");
+  nk.addColorStop(0.22, "rgba(150,150,156,0.15)");
+  nk.addColorStop(0.45, "rgba(150,150,156,0.11)");
+  nk.addColorStop(0.72, "rgba(150,150,156,0.05)");
   nk.addColorStop(1.00, "rgba(150,150,156,0)");
   g.fillStyle = nk;
   g.fillRect(cx - 60, 396, 120, 84);
@@ -487,11 +505,14 @@ function drawOver(g, cx) {
 /* ------------------------------- 辉光渲染 -------------------------------- */
 /* 目标：与参考图一致——芯部 ≈ rgb(233,165,16)，半高宽 ≈ 16px，外扩橙色光晕 */
 const glowCv = document.createElement("canvas");
-glowCv.width = GLOW.hw * 2; glowCv.height = GLOW.h;
 const gg = glowCv.getContext("2d");
+function buildGlowCanvas() {
+  glowCv.width = Math.round(GLOW.hw * 2 * GS);
+  glowCv.height = Math.round(GLOW.h * GS);
+}
 
 function drawGlow(cx, d, inten) {
-  gg.setTransform(1, 0, 0, 1, -(cx - GLOW.hw), -GLOW.y0);
+  gg.setTransform(GS, 0, 0, GS, -(cx - GLOW.hw) * GS, -GLOW.y0 * GS);
   gg.globalCompositeOperation = "source-over";
   gg.globalAlpha = 1;
   gg.clearRect(cx - GLOW.hw, GLOW.y0, GLOW.hw * 2, GLOW.h);
@@ -514,7 +535,9 @@ function drawGlow(cx, d, inten) {
     [10, col(34, 18, 0)],
     [20, col(25, 12, 0)],
     [40, col(16, 7, 0)],
-    [76, col(8, 4, 0)],
+    [76, col(17, 8, 0)],
+    [130, col(13, 6, 0)],           // 宽层：把管内填成暖色（参考图的“光晕罩”感）
+    [210, col(8, 4, 0)],            // 最宽一层，均匀托底
   ];
   gg.lineWidth = 12;
   for (const [blur, c] of passes) {
@@ -657,6 +680,9 @@ function drawDate(g, dateStr, dayStr) {
 const DAYS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 const tubes = TUBE_CX.map((_, i) => ({
   cur: "0", to: "0", t: 9, dur: 0.26, seed: Math.random() * 97 + i * 13,
+  walk: 0,                                  // 平滑随机游走（缓慢忽明忽暗）
+  drop: 0,                                  // 正在闪断的剩余时间
+  nextDrop: 0.6 + Math.random() * 3.2,      // 下次闪断倒计时
 }));
 function digitsOf(str) {
   for (let i = 0; i < 6; i++) {
@@ -702,7 +728,19 @@ function tick(now) {
       if (!FIXED_D) dateStr = s.date;
       if (!FIXED_W) dayStr = s.day;
     }
-    for (const st of tubes) st.t += dt;
+    for (const st of tubes) {
+      st.t += dt;
+      // 缓慢的明暗漂移：随机游走 + 回归
+      st.walk += (Math.random() - 0.5) * 0.55;
+      st.walk *= 0.90;
+      // 偶发闪断（灯管“饿一下”的观感）
+      st.nextDrop -= dt;
+      if (st.drop <= 0 && st.nextDrop <= 0) {
+        st.drop = 0.035 + Math.random() * 0.09;
+        st.nextDrop = 0.7 + Math.random() * 3.6;
+      }
+      if (st.drop > 0) st.drop = Math.max(0, st.drop - dt);
+    }
   } else {
     for (const st of tubes) st.t = 9;
   }
@@ -732,8 +770,10 @@ function tick(now) {
         inten = 1 + 0.5 * Math.pow(1 - k2, 2);
       }
     } else if (!STATIC) {
-      inten = 0.97 + 0.03 * Math.sin(T * 11 + st.seed) * Math.sin(T * 3.3 + st.seed * 0.7);
-      if (Math.sin(T * 0.7 + st.seed * 3.1) > 0.996) inten *= 0.65;   // 偶发闪烁
+      // 常驻：缓慢忽明忽暗 + 极快微颤
+      inten = 1 + st.walk * 0.075;
+      inten *= 0.985 + 0.015 * Math.sin(T * 31 + st.seed) * Math.sin(T * 7.3 + st.seed);
+      if (st.drop > 0) inten *= 0.42 + 0.38 * Math.random();   // 闪断瞬间忽明忽暗
     }
 
     drawGlow(cx, d, inten);
@@ -764,6 +804,36 @@ function tick(now) {
   }
 
   drawDate(ctx, dateStr, dayStr);
+
+  // ── 柔光合成：整幅画面降采样 1/4 并模糊，再加法叠回 ──
+  if (BLOOM > 0) {
+    const bw = bloomCv.width, bh = bloomCv.height;
+    bloomG.setTransform(1, 0, 0, 1, 0, 0);
+    bloomG.globalCompositeOperation = "source-over";
+    bloomG.globalAlpha = 1;
+    bloomG.clearRect(0, 0, bw, bh);
+    bloomG.filter = "none";
+    bloomG.drawImage(cv, 0, 0, bw, bh);
+    // 自乘一次：暗部被压到接近 0，只留灯丝/高光参与柔光，背景仍是纯黑
+    bloomG.globalCompositeOperation = "multiply";
+    bloomG.drawImage(bloomCv, 0, 0, bw, bh);
+    bloomG.globalCompositeOperation = "source-over";
+    bloomG.filter = "blur(1.8px)";
+    bloomG.drawImage(bloomCv, 0, 0, bw, bh);
+    bloomG.filter = "none";
+    // 再叠一层更宽、更弱的柔光（不做平方）：给玻璃高光加“光泽”，纯黑处仍是 0
+    bloomG.globalAlpha = 0.10;
+    bloomG.filter = "blur(7px)";
+    bloomG.drawImage(cv, 0, 0, bw, bh);
+    bloomG.filter = "none";
+    bloomG.globalAlpha = 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = BLOOM;
+    ctx.drawImage(bloomCv, 0, 0, cv.width, cv.height);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
   requestAnimationFrame(tick);
 }
 
